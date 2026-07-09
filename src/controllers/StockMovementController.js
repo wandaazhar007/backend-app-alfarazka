@@ -1,0 +1,69 @@
+import pool from '../config/db.js';
+import * as StockMovementService from '../services/StockMovementService.js';
+import todayJakarta from '../utils/todayJakarta.js';
+
+export const create = async (req, res) => {
+  const { movementDate, items } = req.body;
+
+  if (!Array.isArray(items) || items.length === 0) {
+    return res.status(400).json({ error: 'VALIDATION_ERROR', message: 'items wajib berupa array dan tidak boleh kosong' });
+  }
+
+  for (const item of items) {
+    if (!item.sellerId || !item.productId || item.qtyOut === undefined || item.qtyOut < 0) {
+      return res.status(400).json({
+        error: 'VALIDATION_ERROR',
+        message: 'Setiap item wajib punya sellerId, productId, dan qtyOut (>= 0)',
+      });
+    }
+  }
+
+  const movements = await StockMovementService.createBatch({
+    branchId: req.user.branchId,
+    createdBy: req.user.id,
+    movementDate: movementDate || todayJakarta(),
+    items,
+  });
+
+  res.status(201).json(movements);
+};
+
+export const setReturn = async (req, res) => {
+  const { id } = req.params;
+  const { qtyReturned } = req.body;
+
+  if (qtyReturned === undefined || qtyReturned < 0) {
+    return res.status(400).json({ error: 'VALIDATION_ERROR', message: 'qtyReturned wajib diisi dan >= 0' });
+  }
+
+  try {
+    const movement = await StockMovementService.setReturn(id, qtyReturned);
+    if (!movement) {
+      return res.status(404).json({ error: 'NOT_FOUND', message: 'Data stok tidak ditemukan' });
+    }
+    res.json(movement);
+  } catch (err) {
+    res.status(err.status ?? 500).json({ error: 'RETURN_UPDATE_FAILED', message: err.message });
+  }
+};
+
+export const list = async (req, res) => {
+  const { date, seller_id: sellerIdParam } = req.query;
+
+  let branchId;
+  let sellerId = sellerIdParam;
+
+  if (req.user.role === 'seller') {
+    const { rows } = await pool.query('SELECT id FROM sellers WHERE user_id = $1', [req.user.id]);
+    if (rows.length === 0) {
+      return res.status(403).json({ error: 'NOT_A_SELLER', message: 'Akun ini bukan penjual keliling.' });
+    }
+    sellerId = rows[0].id;
+  } else if (req.user.role === 'admin') {
+    branchId = req.user.branchId;
+  }
+  // owner: no branch filter, sees all branches
+
+  const movements = await StockMovementService.listMovements({ branchId, sellerId, date });
+  res.json(movements);
+};

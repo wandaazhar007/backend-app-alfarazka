@@ -128,7 +128,8 @@ async function getKelilingBreakdown({ branchId, date }) {
        GROUP BY s.seller_id
      ),
      stock_agg AS (
-       SELECT sm.seller_id, SUM(sm.qty_out) AS qty_out_total, SUM(sm.qty_returned) AS qty_returned_total
+       SELECT sm.seller_id, SUM(sm.qty_out) AS qty_out_total, SUM(sm.qty_returned) AS qty_returned_total,
+              bool_and(sm.returned_at IS NOT NULL) AS is_fully_returned
        FROM stock_movements sm
        WHERE sm.movement_date = $1 ${branchFilterStock}
        GROUP BY sm.seller_id
@@ -137,7 +138,10 @@ async function getKelilingBreakdown({ branchId, date }) {
             COALESCE(cash_agg.cash_total, 0) AS cash,
             COALESCE(qs.amount, 0) AS qris,
             COALESCE(stock_agg.qty_out_total, 0) AS qty_out,
-            COALESCE(stock_agg.qty_returned_total, 0) AS qty_returned
+            COALESCE(stock_agg.qty_returned_total, 0) AS qty_returned,
+            COALESCE(stock_agg.is_fully_returned, false) AS is_fully_returned,
+            (cash_agg.seller_id IS NOT NULL) AS has_cash_record,
+            (qs.id IS NOT NULL) AS has_qris_record
      FROM sellers se
      JOIN users u ON u.id = se.user_id
      LEFT JOIN cash_agg ON cash_agg.seller_id = se.id
@@ -163,6 +167,8 @@ async function getKelilingBreakdown({ branchId, date }) {
       qtyOut,
       qtyReturned,
       qtySold: qtyOut - qtyReturned,
+      isFullyReturned: row.is_fully_returned === true,
+      isSettled: row.has_cash_record === true && row.has_qris_record === true,
     };
   });
 

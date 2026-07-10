@@ -8,6 +8,13 @@ const router = Router();
 
 router.post('/api/stock-movements', VerifyFirebaseToken, CheckLicense, RequireRole(['admin']), StockMovementController.create);
 router.put(
+  '/api/stock-movements/return-batch',
+  VerifyFirebaseToken,
+  CheckLicense,
+  RequireRole(['admin']),
+  StockMovementController.setReturnBatch
+);
+router.put(
   '/api/stock-movements/:id/return',
   VerifyFirebaseToken,
   CheckLicense,
@@ -20,6 +27,13 @@ router.get(
   CheckLicense,
   RequireRole(['admin', 'owner', 'seller']),
   StockMovementController.list
+);
+router.delete(
+  '/api/stock-movements/seller/:sellerId/date/:date',
+  VerifyFirebaseToken,
+  CheckLicense,
+  RequireRole(['admin']),
+  StockMovementController.removeBySellerAndDate
 );
 
 export default router;

@@ -1,6 +1,7 @@
 import pool from '../config/db.js';
 import * as StockMovementService from '../services/StockMovementService.js';
 import todayJakarta from '../utils/todayJakarta.js';
+import { logAudit } from '../middlewares/AuditLogger.js';
 
 export const create = async (req, res) => {
   const { movementDate, items } = req.body;
@@ -47,6 +48,30 @@ export const setReturn = async (req, res) => {
   }
 };
 
+export const setReturnBatch = async (req, res) => {
+  const { items } = req.body;
+
+  if (!Array.isArray(items) || items.length === 0) {
+    return res.status(400).json({ error: 'VALIDATION_ERROR', message: 'items wajib berupa array dan tidak boleh kosong' });
+  }
+
+  for (const item of items) {
+    if (!item.id || item.qtyReturned === undefined || item.qtyReturned < 0) {
+      return res.status(400).json({
+        error: 'VALIDATION_ERROR',
+        message: 'Setiap item wajib punya id dan qtyReturned (>= 0)',
+      });
+    }
+  }
+
+  try {
+    const movements = await StockMovementService.setReturnBatch(items);
+    res.json(movements);
+  } catch (err) {
+    res.status(err.status ?? 500).json({ error: 'RETURN_UPDATE_FAILED', message: err.message });
+  }
+};
+
 export const list = async (req, res) => {
   const { date, seller_id: sellerIdParam } = req.query;
 
@@ -66,4 +91,28 @@ export const list = async (req, res) => {
 
   const movements = await StockMovementService.listMovements({ branchId, sellerId, date });
   res.json(movements);
+};
+
+export const removeBySellerAndDate = async (req, res) => {
+  const { sellerId, date } = req.params;
+
+  const deletedCount = await StockMovementService.deleteBySellerAndDate({
+    branchId: req.user.branchId,
+    sellerId,
+    movementDate: date,
+  });
+
+  if (deletedCount === 0) {
+    return res.status(404).json({ error: 'NOT_FOUND', message: 'Data stok pagi tidak ditemukan untuk penjual/tanggal ini' });
+  }
+
+  await logAudit(null, {
+    userId: req.user.id,
+    action: 'delete',
+    entity: 'stock_movements',
+    entityId: sellerId,
+    details: { sellerId, movementDate: date, deletedCount },
+  });
+
+  res.status(204).send();
 };

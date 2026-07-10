@@ -67,11 +67,51 @@ export async function setReturn(id, qtyReturned) {
   }
 
   const { rows } = await pool.query(
-    `UPDATE stock_movements SET qty_returned = $1 WHERE id = $2 RETURNING *`,
+    `UPDATE stock_movements SET qty_returned = $1, returned_at = now() WHERE id = $2 RETURNING *`,
     [qtyReturned, id]
   );
 
   return mapMovementRow(rows[0]);
+}
+
+export async function setReturnBatch(items) {
+  const client = await pool.connect();
+
+  try {
+    await client.query('BEGIN');
+
+    const results = [];
+    for (const { id, qtyReturned } of items) {
+      const { rows: existing } = await client.query('SELECT * FROM stock_movements WHERE id = $1', [id]);
+      if (existing.length === 0) continue;
+
+      if (qtyReturned > existing[0].qty_out) {
+        throw Object.assign(new Error('qtyReturned tidak boleh lebih besar dari qtyOut'), { status: 400 });
+      }
+
+      const { rows } = await client.query(
+        `UPDATE stock_movements SET qty_returned = $1, returned_at = now() WHERE id = $2 RETURNING *`,
+        [qtyReturned, id]
+      );
+      results.push(rows[0]);
+    }
+
+    await client.query('COMMIT');
+    return results.map(mapMovementRow);
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+export async function deleteBySellerAndDate({ branchId, sellerId, movementDate }) {
+  const { rows } = await pool.query(
+    `DELETE FROM stock_movements WHERE branch_id = $1 AND seller_id = $2 AND movement_date = $3 RETURNING id`,
+    [branchId, sellerId, movementDate]
+  );
+  return rows.length;
 }
 
 export async function listMovements({ branchId, sellerId, date }) {
@@ -96,7 +136,7 @@ export async function listMovements({ branchId, sellerId, date }) {
   const { rows } = await pool.query(
     `SELECT sm.id, sm.branch_id, sm.seller_id, su.name AS seller_name,
             sm.product_id, p.name AS product_name,
-            sm.movement_date, sm.qty_out, sm.qty_returned, sm.created_at
+            sm.movement_date, sm.qty_out, sm.qty_returned, sm.returned_at, sm.created_at
      FROM stock_movements sm
      JOIN sellers s ON s.id = sm.seller_id
      JOIN users su ON su.id = s.user_id
@@ -124,6 +164,7 @@ function mapMovementRow(row) {
     qtyOut,
     qtyReturned,
     qtySold: qtyOut - qtyReturned,
+    returnedAt: row.returned_at,
     createdAt: row.created_at,
   };
 }

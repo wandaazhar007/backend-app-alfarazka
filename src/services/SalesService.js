@@ -50,6 +50,14 @@ export async function upsertKelilingSale({ branchId, sellerId, saleDate, payment
       insertedPayments.push(rows[0]);
     }
 
+    // Admin baru saja mengonfirmasi ulang setoran untuk seller+tanggal ini —
+    // itu artinya koreksi retur (kalau ada) sudah ditindaklanjuti, jadi
+    // hapus tanda "perlu resettlement" di StockEveningPage/DailySettlementPage.
+    await client.query(`UPDATE stock_movements SET needs_resettlement = false WHERE seller_id = $1 AND movement_date = $2`, [
+      sellerId,
+      saleDate,
+    ]);
+
     await logAudit(client, {
       userId: createdBy,
       action: auditAction,

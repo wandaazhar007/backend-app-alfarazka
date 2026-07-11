@@ -49,7 +49,11 @@ export const setReturn = async (req, res) => {
 };
 
 export const setReturnBatch = async (req, res) => {
-  const { items } = req.body;
+  const { sellerId, movementDate, items } = req.body;
+
+  if (!sellerId || !movementDate) {
+    return res.status(400).json({ error: 'VALIDATION_ERROR', message: 'sellerId dan movementDate wajib diisi' });
+  }
 
   if (!Array.isArray(items) || items.length === 0) {
     return res.status(400).json({ error: 'VALIDATION_ERROR', message: 'items wajib berupa array dan tidak boleh kosong' });
@@ -65,7 +69,7 @@ export const setReturnBatch = async (req, res) => {
   }
 
   try {
-    const movements = await StockMovementService.setReturnBatch(items);
+    const movements = await StockMovementService.setReturnBatch({ sellerId, movementDate, items });
     res.json(movements);
   } catch (err) {
     res.status(err.status ?? 500).json({ error: 'RETURN_UPDATE_FAILED', message: err.message });

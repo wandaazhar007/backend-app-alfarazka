@@ -74,11 +74,25 @@ export async function setReturn(id, qtyReturned) {
   return mapMovementRow(rows[0]);
 }
 
-export async function setReturnBatch(items) {
+// Kalau seller ini SUDAH settle (cash+qris) utk seller+tanggal itu, mengedit
+// retur sekarang berarti angka setoran yang sudah diinput jadi tidak sinkron
+// lagi — tandai needs_resettlement supaya DailySettlementPage bisa
+// menyorotnya. Dihitung ulang tiap kali (bukan cuma di-set sekali) sehingga
+// otomatis balik false kalau memang belum pernah settle.
+export async function setReturnBatch({ sellerId, movementDate, items }) {
   const client = await pool.connect();
 
   try {
     await client.query('BEGIN');
+
+    const { rows: settleCheck } = await client.query(
+      `SELECT
+         EXISTS(SELECT 1 FROM sales s JOIN payments p ON p.sale_id = s.id AND p.method = 'cash'
+                WHERE s.seller_id = $1 AND s.sale_date = $2 AND s.sale_type = 'keliling') AS has_cash,
+         EXISTS(SELECT 1 FROM qris_settlements WHERE seller_id = $1 AND settlement_date = $2) AS has_qris`,
+      [sellerId, movementDate]
+    );
+    const shouldFlag = settleCheck[0].has_cash && settleCheck[0].has_qris;
 
     const results = [];
     for (const { id, qtyReturned } of items) {
@@ -90,8 +104,8 @@ export async function setReturnBatch(items) {
       }
 
       const { rows } = await client.query(
-        `UPDATE stock_movements SET qty_returned = $1, returned_at = now() WHERE id = $2 RETURNING *`,
-        [qtyReturned, id]
+        `UPDATE stock_movements SET qty_returned = $1, returned_at = now(), needs_resettlement = $2 WHERE id = $3 RETURNING *`,
+        [qtyReturned, shouldFlag, id]
       );
       results.push(rows[0]);
     }
@@ -136,7 +150,7 @@ export async function listMovements({ branchId, sellerId, date }) {
   const { rows } = await pool.query(
     `SELECT sm.id, sm.branch_id, sm.seller_id, su.name AS seller_name,
             sm.product_id, p.name AS product_name,
-            sm.movement_date, sm.qty_out, sm.qty_returned, sm.returned_at, sm.created_at
+            sm.movement_date, sm.qty_out, sm.qty_returned, sm.returned_at, sm.needs_resettlement, sm.created_at
      FROM stock_movements sm
      JOIN sellers s ON s.id = sm.seller_id
      JOIN users su ON su.id = s.user_id
@@ -165,6 +179,7 @@ function mapMovementRow(row) {
     qtyReturned,
     qtySold: qtyOut - qtyReturned,
     returnedAt: row.returned_at,
+    needsResettlement: row.needs_resettlement === true,
     createdAt: row.created_at,
   };
 }

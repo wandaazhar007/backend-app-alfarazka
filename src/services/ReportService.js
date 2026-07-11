@@ -79,6 +79,10 @@ export async function getSellerComparison({ branchId, from, to }) {
 // actually received that day, using the same formula as gross_profit in
 // DailyClosingService) — not just mobile sales.
 export async function getDailyReport({ branchId, date }) {
+  // Paralel — lebih cepat dari sequential. Batas jumlah koneksi DB yang aman
+  // ditangani oleh `pool.max` (lihat config/db.js), yang otomatis mengantre
+  // query kalau semua koneksi lagi dipakai, jadi tidak perlu diserialkan manual
+  // di sini.
   const [keliling, toko, paket] = await Promise.all([
     getKelilingBreakdown({ branchId, date }),
     getTokoBreakdown({ branchId, date }),
@@ -106,7 +110,7 @@ export async function getDailyReport({ branchId, date }) {
 // Formula based on docs/01_DATA_MODEL.md, "Key Calculation Notes":
 // - Daily sales per seller = SUM(payments.amount where method='cash' for that seller's sales on that day) + the seller's qris_settlements.amount for that day
 // - Bread sold per seller = SUM(qty_out - qty_returned) from that day's stock_movements
-async function getKelilingBreakdown({ branchId, date }) {
+export async function getKelilingBreakdown({ branchId, date }) {
   const params = [date];
   let branchFilterSellers = '';
   let branchFilterSales = '';
@@ -129,7 +133,8 @@ async function getKelilingBreakdown({ branchId, date }) {
      ),
      stock_agg AS (
        SELECT sm.seller_id, SUM(sm.qty_out) AS qty_out_total, SUM(sm.qty_returned) AS qty_returned_total,
-              bool_and(sm.returned_at IS NOT NULL) AS is_fully_returned
+              bool_and(sm.returned_at IS NOT NULL) AS is_fully_returned,
+              bool_or(sm.needs_resettlement) AS needs_resettlement
        FROM stock_movements sm
        WHERE sm.movement_date = $1 ${branchFilterStock}
        GROUP BY sm.seller_id
@@ -140,6 +145,7 @@ async function getKelilingBreakdown({ branchId, date }) {
             COALESCE(stock_agg.qty_out_total, 0) AS qty_out,
             COALESCE(stock_agg.qty_returned_total, 0) AS qty_returned,
             COALESCE(stock_agg.is_fully_returned, false) AS is_fully_returned,
+            COALESCE(stock_agg.needs_resettlement, false) AS needs_resettlement,
             (cash_agg.seller_id IS NOT NULL) AS has_cash_record,
             (qs.id IS NOT NULL) AS has_qris_record
      FROM sellers se
@@ -169,6 +175,7 @@ async function getKelilingBreakdown({ branchId, date }) {
       qtySold: qtyOut - qtyReturned,
       isFullyReturned: row.is_fully_returned === true,
       isSettled: row.has_cash_record === true && row.has_qris_record === true,
+      needsResettlement: row.needs_resettlement === true,
     };
   });
 

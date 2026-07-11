@@ -15,6 +15,23 @@ export const daily = async (req, res) => {
   res.json(report);
 };
 
+// Versi ringan dari `daily` — cuma breakdown keliling (tanpa toko/paket),
+// dipakai StockMorningPage/StockEveningPage/DailySettlementPage yang cuma
+// butuh status retur+setoran per penjual, supaya tidak ikut menanggung 3
+// query toko+paket yang tidak mereka pakai sama sekali.
+export const kelilingStatus = async (req, res) => {
+  const { date } = req.query;
+
+  if (!date) {
+    return res.status(400).json({ error: 'VALIDATION_ERROR', message: 'Query param date wajib diisi' });
+  }
+
+  const branchId = req.user.role === 'admin' ? req.user.branchId : undefined;
+
+  const keliling = await ReportService.getKelilingBreakdown({ branchId, date });
+  res.json(keliling);
+};
+
 export const exportReport = async (req, res) => {
   const { date, format } = req.query;
 

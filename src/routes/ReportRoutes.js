@@ -8,6 +8,13 @@ const router = Router();
 
 router.get('/api/reports/daily', VerifyFirebaseToken, CheckLicense, RequireRole(['admin', 'owner']), ReportController.daily);
 router.get(
+  '/api/reports/keliling-status',
+  VerifyFirebaseToken,
+  CheckLicense,
+  RequireRole(['admin', 'owner']),
+  ReportController.kelilingStatus
+);
+router.get(
   '/api/reports/export',
   VerifyFirebaseToken,
   CheckLicense,

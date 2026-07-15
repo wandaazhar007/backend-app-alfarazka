@@ -8,5 +8,7 @@ const router = Router();
 
 router.get('/api/customers', VerifyFirebaseToken, CheckLicense, RequireRole(['admin']), CustomerController.list);
 router.post('/api/customers', VerifyFirebaseToken, CheckLicense, RequireRole(['admin']), CustomerController.create);
+router.put('/api/customers/:id', VerifyFirebaseToken, CheckLicense, RequireRole(['admin']), CustomerController.update);
+router.delete('/api/customers/:id', VerifyFirebaseToken, CheckLicense, RequireRole(['admin']), CustomerController.remove);
 
 export default router;

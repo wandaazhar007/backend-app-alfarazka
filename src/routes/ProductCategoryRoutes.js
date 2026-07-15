@@ -27,5 +27,12 @@ router.put(
   RequireRole(['admin']),
   ProductCategoryController.update
 );
+router.delete(
+  '/api/product-categories/:id',
+  VerifyFirebaseToken,
+  CheckLicense,
+  RequireRole(['admin']),
+  ProductCategoryController.remove
+);
 
 export default router;

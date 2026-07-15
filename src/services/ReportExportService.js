@@ -22,8 +22,10 @@ export function generatePdfReport(res, { date, report, closingTotals }) {
   doc.text(`  - Keliling: ${formatCurrency(report.summary.totalKeliling)}`);
   doc.text(`  - Toko: ${formatCurrency(report.summary.totalToko)}`);
   doc.text(`  - Paket: ${formatCurrency(report.summary.totalPaket)}`);
-  doc.text(`Total Pengeluaran: ${formatCurrency(closingTotals.totalExpenses)}`);
+  doc.text(`Total HPP: ${formatCurrency(closingTotals.totalCogs)}`);
   doc.text(`Laba Kotor: ${formatCurrency(closingTotals.grossProfit)}`);
+  doc.text(`Total Pengeluaran Operasional: ${formatCurrency(closingTotals.totalExpenses)}`);
+  doc.text(`Laba Bersih: ${formatCurrency(closingTotals.netProfit)}`);
   doc.text(`Roti Terjual (keliling): ${report.summary.totalQtySold}`);
   doc.text(`Roti Retur (keliling): ${report.summary.totalQtyReturned}`);
   doc.moveDown(1.5);
@@ -137,8 +139,10 @@ export async function generateExcelReport(res, { date, report, closingTotals }) 
   sheet.addRow(['  - Keliling', report.summary.totalKeliling]);
   sheet.addRow(['  - Toko', report.summary.totalToko]);
   sheet.addRow(['  - Paket', report.summary.totalPaket]);
-  sheet.addRow(['Total Pengeluaran', closingTotals.totalExpenses]);
+  sheet.addRow(['Total HPP', closingTotals.totalCogs]);
   sheet.addRow(['Laba Kotor', closingTotals.grossProfit]);
+  sheet.addRow(['Total Pengeluaran Operasional', closingTotals.totalExpenses]);
+  sheet.addRow(['Laba Bersih', closingTotals.netProfit]);
   sheet.addRow(['Roti Terjual (keliling)', report.summary.totalQtySold]);
   sheet.addRow(['Roti Retur (keliling)', report.summary.totalQtyReturned]);
   sheet.addRow([]);

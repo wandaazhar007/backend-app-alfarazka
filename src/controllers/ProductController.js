@@ -6,7 +6,11 @@ export const list = async (req, res) => {
   const params = [];
   let query = `
     SELECT p.id, p.branch_id, p.name, p.category_id, pc.name AS category_name,
-           p.unit_price, p.is_active, p.created_at${pagination ? ', COUNT(*) OVER() AS full_count' : ''}
+           p.unit_price, p.cost_price, p.is_active, p.created_at,
+           (
+             EXISTS (SELECT 1 FROM sale_items si WHERE si.product_id = p.id)
+             OR EXISTS (SELECT 1 FROM stock_movements sm WHERE sm.product_id = p.id)
+           ) AS has_usage${pagination ? ', COUNT(*) OVER() AS full_count' : ''}
     FROM products p
     LEFT JOIN product_categories pc ON pc.id = p.category_id
   `;
@@ -16,7 +20,10 @@ export const list = async (req, res) => {
     query += ` WHERE p.branch_id = $1`;
   }
 
-  query += ` ORDER BY p.name ASC`;
+  // Tabel Kelola Produk (paginated) tampilkan yang terbaru dulu. Dropdown/Combobox
+  // pemilihan produk di halaman lain (StockMorningPage, TokoSalePage — panggil endpoint
+  // ini TANPA `page`) tetap alfabetis, lebih gampang dicari manual saat mengetik.
+  query += pagination ? ` ORDER BY p.created_at DESC` : ` ORDER BY p.name ASC`;
 
   if (pagination) {
     params.push(pagination.limit, pagination.offset);
@@ -32,18 +39,18 @@ export const list = async (req, res) => {
 };
 
 export const create = async (req, res) => {
-  const { name, categoryId, unitPrice, isActive } = req.body;
+  const { name, categoryId, unitPrice, costPrice, isActive } = req.body;
 
-  if (!name || unitPrice === undefined) {
-    return res.status(400).json({ error: 'VALIDATION_ERROR', message: 'name dan unitPrice wajib diisi' });
+  if (!name || unitPrice === undefined || costPrice === undefined) {
+    return res.status(400).json({ error: 'VALIDATION_ERROR', message: 'name, unitPrice, dan costPrice wajib diisi' });
   }
 
   try {
     const { rows } = await pool.query(
-      `INSERT INTO products (branch_id, name, category_id, unit_price, is_active)
-       VALUES ($1, $2, $3, $4, COALESCE($5, true))
-       RETURNING id, branch_id, name, category_id, unit_price, is_active, created_at`,
-      [req.user.branchId, name, categoryId ?? null, unitPrice, isActive]
+      `INSERT INTO products (branch_id, name, category_id, unit_price, cost_price, is_active)
+       VALUES ($1, $2, $3, $4, $5, COALESCE($6, true))
+       RETURNING id, branch_id, name, category_id, unit_price, cost_price, is_active, created_at`,
+      [req.user.branchId, name, categoryId ?? null, unitPrice, costPrice, isActive]
     );
 
     res.status(201).json(mapProduct(await withCategoryName(rows[0])));
@@ -51,13 +58,16 @@ export const create = async (req, res) => {
     if (err.code === '23503') {
       return res.status(400).json({ error: 'INVALID_CATEGORY', message: 'categoryId tidak valid' });
     }
+    if (err.code === '23505') {
+      return res.status(409).json({ error: 'DUPLICATE_PRODUCT', message: 'Nama produk sudah ada.' });
+    }
     throw err;
   }
 };
 
 export const update = async (req, res) => {
   const { id } = req.params;
-  const { name, categoryId, unitPrice, isActive } = req.body;
+  const { name, categoryId, unitPrice, costPrice, isActive } = req.body;
 
   try {
     const { rows } = await pool.query(
@@ -65,10 +75,11 @@ export const update = async (req, res) => {
          name = COALESCE($1, name),
          category_id = COALESCE($2, category_id),
          unit_price = COALESCE($3, unit_price),
-         is_active = COALESCE($4, is_active)
-       WHERE id = $5
-       RETURNING id, branch_id, name, category_id, unit_price, is_active, created_at`,
-      [name, categoryId, unitPrice, isActive, id]
+         cost_price = COALESCE($4, cost_price),
+         is_active = COALESCE($5, is_active)
+       WHERE id = $6
+       RETURNING id, branch_id, name, category_id, unit_price, cost_price, is_active, created_at`,
+      [name, categoryId, unitPrice, costPrice, isActive, id]
     );
 
     if (rows.length === 0) {
@@ -79,6 +90,35 @@ export const update = async (req, res) => {
   } catch (err) {
     if (err.code === '23503') {
       return res.status(400).json({ error: 'INVALID_CATEGORY', message: 'categoryId tidak valid' });
+    }
+    if (err.code === '23505') {
+      return res.status(409).json({ error: 'DUPLICATE_PRODUCT', message: 'Nama produk sudah ada.' });
+    }
+    throw err;
+  }
+};
+
+export const remove = async (req, res) => {
+  const { id } = req.params;
+
+  const { rows: existing } = await pool.query(
+    'SELECT id FROM products WHERE id = $1 AND branch_id = $2',
+    [id, req.user.branchId]
+  );
+
+  if (existing.length === 0) {
+    return res.status(404).json({ error: 'NOT_FOUND', message: 'Produk tidak ditemukan' });
+  }
+
+  try {
+    await pool.query('DELETE FROM products WHERE id = $1', [id]);
+    res.status(204).send();
+  } catch (err) {
+    if (err.code === '23503') {
+      return res.status(409).json({
+        error: 'PRODUCT_IN_USE',
+        message: 'Produk sudah pernah dipakai di transaksi/stok, tidak bisa dihapus.',
+      });
     }
     throw err;
   }
@@ -100,6 +140,8 @@ function mapProduct(row) {
     categoryId: row.category_id,
     categoryName: row.category_name,
     unitPrice: Number(row.unit_price),
+    costPrice: Number(row.cost_price),
+    hasUsage: Boolean(row.has_usage),
     isActive: row.is_active,
     createdAt: row.created_at,
   };

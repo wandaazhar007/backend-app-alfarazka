@@ -13,5 +13,26 @@ router.get(
   RequireRole(['admin', 'owner']),
   ExpenseCategoryController.list
 );
+router.post(
+  '/api/expense-categories',
+  VerifyFirebaseToken,
+  CheckLicense,
+  RequireRole(['admin']),
+  ExpenseCategoryController.create
+);
+router.put(
+  '/api/expense-categories/:id',
+  VerifyFirebaseToken,
+  CheckLicense,
+  RequireRole(['admin']),
+  ExpenseCategoryController.update
+);
+router.delete(
+  '/api/expense-categories/:id',
+  VerifyFirebaseToken,
+  CheckLicense,
+  RequireRole(['admin']),
+  ExpenseCategoryController.remove
+);
 
 export default router;

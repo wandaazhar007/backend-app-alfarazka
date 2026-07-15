@@ -9,6 +9,7 @@ const router = Router();
 router.get('/api/sellers', VerifyFirebaseToken, CheckLicense, RequireRole(['admin', 'owner']), SellerController.list);
 router.post('/api/sellers', VerifyFirebaseToken, CheckLicense, RequireRole(['admin']), SellerController.create);
 router.put('/api/sellers/:id', VerifyFirebaseToken, CheckLicense, RequireRole(['admin']), SellerController.update);
+router.delete('/api/sellers/:id', VerifyFirebaseToken, CheckLicense, RequireRole(['admin']), SellerController.remove);
 router.get(
   '/api/seller/today-stock',
   VerifyFirebaseToken,

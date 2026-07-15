@@ -81,6 +81,49 @@ export const create = async (req, res) => {
   res.status(201).json(mapExpense(withCategory[0]));
 };
 
+export const update = async (req, res) => {
+  const { id } = req.params;
+  const { categoryId, amount, description, expenseDate } = req.body;
+
+  if (!categoryId || typeof amount !== 'number' || amount < 0 || !expenseDate) {
+    return res.status(400).json({
+      error: 'VALIDATION_ERROR',
+      message: 'categoryId, amount (>= 0), dan expenseDate wajib diisi',
+    });
+  }
+
+  const { rows: existing } = await pool.query(
+    'SELECT * FROM expenses WHERE id = $1 AND branch_id = $2',
+    [id, req.user.branchId]
+  );
+
+  if (existing.length === 0) {
+    return res.status(404).json({ error: 'NOT_FOUND', message: 'Pengeluaran tidak ditemukan' });
+  }
+
+  await pool.query(
+    `UPDATE expenses SET category_id = $1, amount = $2, description = $3, expense_date = $4 WHERE id = $5`,
+    [categoryId, amount, description ?? null, expenseDate, id]
+  );
+
+  await logAudit(null, {
+    userId: req.user.id,
+    action: 'update',
+    entity: 'expenses',
+    entityId: id,
+    details: { categoryId, amount, expenseDate },
+  });
+
+  const { rows: withCategory } = await pool.query(
+    `SELECT e.id, e.branch_id, e.category_id, ec.name AS category_name, e.amount, e.description,
+            e.expense_date, e.created_by, e.created_at
+     FROM expenses e JOIN expense_categories ec ON ec.id = e.category_id WHERE e.id = $1`,
+    [id]
+  );
+
+  res.json(mapExpense(withCategory[0]));
+};
+
 export const remove = async (req, res) => {
   const { id } = req.params;
 

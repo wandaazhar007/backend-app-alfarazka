@@ -20,6 +20,7 @@ import receivableRoutes from './routes/ReceivableRoutes.js';
 import auditLogRoutes from './routes/AuditLogRoutes.js';
 import licenseRoutes from './routes/LicenseRoutes.js';
 import { startLicenseCron } from './services/LicenseCron.js';
+import { startDailyClosingCron } from './services/DailyClosingCron.js';
 
 const app = express();
 
@@ -46,6 +47,7 @@ app.use(auditLogRoutes);
 app.use(licenseRoutes);
 
 startLicenseCron();
+startDailyClosingCron();
 
 app.use((err, req, res, next) => {
   if (res.headersSent) {

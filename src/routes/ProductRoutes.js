@@ -9,5 +9,6 @@ const router = Router();
 router.get('/api/products', VerifyFirebaseToken, CheckLicense, RequireRole(['admin', 'owner']), ProductController.list);
 router.post('/api/products', VerifyFirebaseToken, CheckLicense, RequireRole(['admin']), ProductController.create);
 router.put('/api/products/:id', VerifyFirebaseToken, CheckLicense, RequireRole(['admin']), ProductController.update);
+router.delete('/api/products/:id', VerifyFirebaseToken, CheckLicense, RequireRole(['admin']), ProductController.remove);
 
 export default router;

@@ -51,13 +51,28 @@ export const update = async (req, res) => {
   const { id } = req.params;
   const { name, phone, qrisTerminalId, dailyMealAllowance, isActive } = req.body;
 
-  const seller = await SellerService.updateSeller(id, { name, phone, qrisTerminalId, dailyMealAllowance, isActive });
+  try {
+    const seller = await SellerService.updateSeller(id, { name, phone, qrisTerminalId, dailyMealAllowance, isActive });
 
-  if (!seller) {
-    return res.status(404).json({ error: 'NOT_FOUND', message: 'Penjual tidak ditemukan' });
+    if (!seller) {
+      return res.status(404).json({ error: 'NOT_FOUND', message: 'Penjual tidak ditemukan' });
+    }
+
+    res.json(seller);
+  } catch (err) {
+    res.status(err.status ?? 500).json({ error: 'SELLER_UPDATE_FAILED', message: err.message });
   }
+};
 
-  res.json(seller);
+export const remove = async (req, res) => {
+  const { id } = req.params;
+
+  try {
+    await SellerService.deleteSeller(id, req.user.branchId);
+    res.status(204).send();
+  } catch (err) {
+    res.status(err.status ?? 500).json({ error: 'SELLER_DELETE_FAILED', message: err.message });
+  }
 };
 
 export const todayStock = async (req, res) => {

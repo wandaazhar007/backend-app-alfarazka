@@ -1,0 +1,3 @@
+ALTER TABLE products ADD COLUMN cost_price NUMERIC(12,2) NOT NULL DEFAULT 0;
+ALTER TABLE daily_closings ADD COLUMN total_cogs NUMERIC(14,2) DEFAULT 0;
+ALTER TABLE daily_closings ADD COLUMN net_profit NUMERIC(14,2) DEFAULT 0;

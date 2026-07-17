@@ -2,6 +2,7 @@ import pool from '../config/db.js';
 import { getPagination, extractTotal } from '../utils/pagination.js';
 
 export const list = async (req, res) => {
+  const { search } = req.query;
   const pagination = getPagination(req);
   const params = [];
   let query = `
@@ -9,6 +10,11 @@ export const list = async (req, res) => {
            EXISTS (SELECT 1 FROM expenses e WHERE e.category_id = ec.id) AS has_usage${pagination ? ', COUNT(*) OVER() AS full_count' : ''}
     FROM expense_categories ec
   `;
+
+  if (search) {
+    params.push(`%${search}%`);
+    query += ` WHERE ec.name ILIKE $${params.length}`;
+  }
 
   // Tabel Kelola Kategori Pengeluaran (paginated) tampilkan yang terbaru dulu — tabel
   // ini tidak punya kolom created_at, jadi `id` SERIAL dipakai sebagai proksi urutan

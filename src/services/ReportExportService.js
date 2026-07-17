@@ -5,12 +5,29 @@ function formatCurrency(n) {
   return `Rp ${Number(n).toLocaleString('id-ID')}`;
 }
 
-export function generatePdfReport(res, { date, report, closingTotals }) {
+const MONTH_NAMES_ID = [
+  'Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni',
+  'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember',
+];
+
+// "2026-07-16" -> "16-Juli-2026" — samakan dengan format badge rentang tanggal di ExpensesPage.
+function formatTanggalDash(isoDate) {
+  const [year, month, day] = isoDate.split('-');
+  return `${day}-${MONTH_NAMES_ID[Number(month) - 1]}-${year}`;
+}
+
+// `date` (satu hari) ATAU `from`+`to` (rentang) — dipakai baik oleh laporan harian
+// gabungan maupun laporan pengeluaran, supaya labelnya konsisten di semua export.
+function formatRangeLabel({ date, from, to }) {
+  return date ? formatTanggalDash(date) : `${formatTanggalDash(from)} s/d ${formatTanggalDash(to)}`;
+}
+
+export function generatePdfReport(res, { date, from, to, report, closingTotals }) {
   const doc = new PDFDocument({ margin: 40 });
   doc.pipe(res);
 
   doc.fontSize(18).text('Laporan Harian - Alfarazka Bakery', { align: 'center' });
-  doc.fontSize(12).text(`Tanggal: ${date}`, { align: 'center' });
+  doc.fontSize(12).text(`Tanggal: ${formatRangeLabel({ date, from, to })}`, { align: 'center' });
   doc.moveDown(1.5);
 
   doc.fontSize(14).text('Ringkasan Gabungan (Keliling + Toko + Paket)');
@@ -125,12 +142,12 @@ export function generatePdfReport(res, { date, report, closingTotals }) {
   doc.end();
 }
 
-export async function generateExcelReport(res, { date, report, closingTotals }) {
+export async function generateExcelReport(res, { date, from, to, report, closingTotals }) {
   const workbook = new ExcelJS.Workbook();
   const sheet = workbook.addWorksheet('Laporan Harian');
 
   sheet.addRow(['Laporan Harian - Alfarazka Bakery']);
-  sheet.addRow([`Tanggal: ${date}`]);
+  sheet.addRow([`Tanggal: ${formatRangeLabel({ date, from, to })}`]);
   sheet.addRow([]);
   sheet.addRow(['Ringkasan Gabungan (Keliling + Toko + Paket)']);
   sheet.addRow(['Total Cash', report.summary.totalCash]);
@@ -169,6 +186,74 @@ export async function generateExcelReport(res, { date, report, closingTotals }) 
   paketHeader.font = { bold: true };
   report.paket.sales.forEach((s) => {
     sheet.addRow([s.customName ?? '-', s.customerName ?? '-', s.cash + s.qris, s.totalAmount, s.paymentStatus, s.outstanding]);
+  });
+
+  sheet.columns.forEach((col) => {
+    col.width = 22;
+  });
+
+  await workbook.xlsx.write(res);
+  res.end();
+}
+
+export function generateExpensesPdfReport(res, { from, to, expenses, totals }) {
+  const doc = new PDFDocument({ margin: 40 });
+  doc.pipe(res);
+
+  doc.fontSize(18).text('Laporan Pengeluaran - Alfarazka Bakery', { align: 'center' });
+  doc.fontSize(12).text(`Rentang: ${formatRangeLabel({ from, to })}`, { align: 'center' });
+  doc.moveDown(1.5);
+
+  doc.fontSize(11);
+  doc.text(`Uang Makan: ${formatCurrency(totals.totalMealAllowance)}`);
+  doc.text(`Lain-lain: ${formatCurrency(totals.totalOther)}`);
+  doc.text(`Total Pengeluaran: ${formatCurrency(totals.totalAmount)}`);
+  doc.moveDown(1.5);
+
+  const columns = [
+    { label: 'Tanggal', x: 40, width: 95 },
+    { label: 'Kategori', x: 140, width: 130 },
+    { label: 'Nominal', x: 275, width: 90 },
+    { label: 'Keterangan', x: 370, width: 180 },
+  ];
+
+  doc.fontSize(10).font('Helvetica-Bold');
+  let headerY = doc.y;
+  columns.forEach((col) => doc.text(col.label, col.x, headerY, { width: col.width }));
+  doc.moveDown(0.5);
+  doc.font('Helvetica');
+
+  if (expenses.length === 0) {
+    doc.text('Tidak ada pengeluaran pada rentang tanggal ini.');
+  }
+  expenses.forEach((e) => {
+    const rowY = doc.y;
+    doc.text(formatTanggalDash(e.expenseDate), columns[0].x, rowY, { width: columns[0].width });
+    doc.text(e.categoryName, columns[1].x, rowY, { width: columns[1].width });
+    doc.text(formatCurrency(e.amount), columns[2].x, rowY, { width: columns[2].width });
+    doc.text(e.description ?? '-', columns[3].x, rowY, { width: columns[3].width });
+    doc.moveDown(0.7);
+  });
+
+  doc.end();
+}
+
+export async function generateExpensesExcelReport(res, { from, to, expenses, totals }) {
+  const workbook = new ExcelJS.Workbook();
+  const sheet = workbook.addWorksheet('Laporan Pengeluaran');
+
+  sheet.addRow(['Laporan Pengeluaran - Alfarazka Bakery']);
+  sheet.addRow([`Rentang: ${formatRangeLabel({ from, to })}`]);
+  sheet.addRow([]);
+  sheet.addRow(['Uang Makan', totals.totalMealAllowance]);
+  sheet.addRow(['Lain-lain', totals.totalOther]);
+  sheet.addRow(['Total Pengeluaran', totals.totalAmount]);
+  sheet.addRow([]);
+
+  const header = sheet.addRow(['Tanggal', 'Kategori', 'Nominal', 'Keterangan']);
+  header.font = { bold: true };
+  expenses.forEach((e) => {
+    sheet.addRow([formatTanggalDash(e.expenseDate), e.categoryName, e.amount, e.description ?? '-']);
   });
 
   sheet.columns.forEach((col) => {

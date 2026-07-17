@@ -15,7 +15,8 @@ async function findOwnSeller(userId) {
 
 export const list = async (req, res) => {
   const pagination = getPagination(req);
-  const result = await SellerService.listSellers({ role: req.user.role, branchId: req.user.branchId, pagination });
+  const { search } = req.query;
+  const result = await SellerService.listSellers({ role: req.user.role, branchId: req.user.branchId, pagination, search });
 
   if (pagination) {
     return res.json({ ...result, page: pagination.page, pageSize: pagination.pageSize });

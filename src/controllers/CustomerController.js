@@ -2,7 +2,7 @@ import pool from '../config/db.js';
 import { getPagination, extractTotal } from '../utils/pagination.js';
 
 export const list = async (req, res) => {
-  const { type } = req.query;
+  const { type, search } = req.query;
   const pagination = getPagination(req);
 
   const params = [req.user.branchId];
@@ -11,6 +11,11 @@ export const list = async (req, res) => {
   if (type) {
     params.push(type);
     conditions.push(`c.customer_type = $${params.length}`);
+  }
+
+  if (search) {
+    params.push(`%${search}%`);
+    conditions.push(`c.name ILIKE $${params.length}`);
   }
 
   let query = `

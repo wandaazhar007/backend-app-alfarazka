@@ -2,8 +2,10 @@ import pool from '../config/db.js';
 import { getPagination, extractTotal } from '../utils/pagination.js';
 
 export const list = async (req, res) => {
+  const { search } = req.query;
   const pagination = getPagination(req);
   const params = [];
+  const conditions = [];
   let query = `
     SELECT pc.id, pc.branch_id, pc.name, pc.is_active, pc.created_at,
            EXISTS (SELECT 1 FROM products p WHERE p.category_id = pc.id) AS has_usage${pagination ? ', COUNT(*) OVER() AS full_count' : ''}
@@ -12,7 +14,16 @@ export const list = async (req, res) => {
 
   if (req.user.role !== 'owner') {
     params.push(req.user.branchId);
-    query += ` WHERE pc.branch_id = $1`;
+    conditions.push(`pc.branch_id = $${params.length}`);
+  }
+
+  if (search) {
+    params.push(`%${search}%`);
+    conditions.push(`pc.name ILIKE $${params.length}`);
+  }
+
+  if (conditions.length > 0) {
+    query += ` WHERE ${conditions.join(' AND ')}`;
   }
 
   // Tabel Kelola Kategori Produk (paginated) tampilkan yang terbaru dulu. Dropdown

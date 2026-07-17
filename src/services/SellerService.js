@@ -60,8 +60,9 @@ async function checkSellerUniqueness({ name, phone, qrisTerminalId, excludeSelle
   }
 }
 
-export async function listSellers({ role, branchId, pagination }) {
+export async function listSellers({ role, branchId, pagination, search }) {
   const params = [];
+  const conditions = [];
   let query = `
     SELECT s.id, s.user_id, s.branch_id, s.qris_terminal_id, s.daily_meal_allowance, s.is_active, s.created_at,
            u.name, u.email, u.phone,
@@ -76,7 +77,16 @@ export async function listSellers({ role, branchId, pagination }) {
 
   if (role !== 'owner') {
     params.push(branchId);
-    query += ` WHERE s.branch_id = $1`;
+    conditions.push(`s.branch_id = $${params.length}`);
+  }
+
+  if (search) {
+    params.push(`%${search}%`);
+    conditions.push(`u.name ILIKE $${params.length}`);
+  }
+
+  if (conditions.length > 0) {
+    query += ` WHERE ${conditions.join(' AND ')}`;
   }
 
   // Tabel Kelola Penjual (paginated) tampilkan yang terbaru dulu. Dropdown penjual

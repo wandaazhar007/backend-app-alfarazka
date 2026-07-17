@@ -2,8 +2,10 @@ import pool from '../config/db.js';
 import { getPagination, extractTotal } from '../utils/pagination.js';
 
 export const list = async (req, res) => {
+  const { search } = req.query;
   const pagination = getPagination(req);
   const params = [];
+  const conditions = [];
   let query = `
     SELECT p.id, p.branch_id, p.name, p.category_id, pc.name AS category_name,
            p.unit_price, p.cost_price, p.is_active, p.created_at,
@@ -17,7 +19,16 @@ export const list = async (req, res) => {
 
   if (req.user.role !== 'owner') {
     params.push(req.user.branchId);
-    query += ` WHERE p.branch_id = $1`;
+    conditions.push(`p.branch_id = $${params.length}`);
+  }
+
+  if (search) {
+    params.push(`%${search}%`);
+    conditions.push(`p.name ILIKE $${params.length}`);
+  }
+
+  if (conditions.length > 0) {
+    query += ` WHERE ${conditions.join(' AND ')}`;
   }
 
   // Tabel Kelola Produk (paginated) tampilkan yang terbaru dulu. Dropdown/Combobox

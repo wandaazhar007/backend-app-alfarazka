@@ -1,9 +1,12 @@
 import pool from '../config/db.js';
 import { logAudit } from '../middlewares/AuditLogger.js';
 import { getPagination, extractTotal } from '../utils/pagination.js';
+import * as ReportExportService from '../services/ReportExportService.js';
+
+const MEAL_ALLOWANCE_CATEGORY = 'uang_makan_penjual';
 
 export const list = async (req, res) => {
-  const { date, category_id: categoryId } = req.query;
+  const { date, from, to, category_id: categoryId } = req.query;
   const pagination = getPagination(req);
 
   const params = [];
@@ -17,6 +20,10 @@ export const list = async (req, res) => {
     params.push(date);
     conditions.push(`e.expense_date = $${params.length}`);
   }
+  if (from && to) {
+    params.push(from, to);
+    conditions.push(`e.expense_date BETWEEN $${params.length - 1} AND $${params.length}`);
+  }
   if (categoryId) {
     params.push(categoryId);
     conditions.push(`e.category_id = $${params.length}`);
@@ -25,7 +32,13 @@ export const list = async (req, res) => {
   const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
 
   let query = `SELECT e.id, e.branch_id, e.category_id, ec.name AS category_name, e.amount, e.description,
-            e.expense_date, e.created_by, e.created_at${pagination ? ', COUNT(*) OVER() AS full_count' : ''}
+            e.expense_date, e.created_by, e.created_at${
+              pagination
+                ? `, COUNT(*) OVER() AS full_count,
+                   SUM(e.amount) OVER() AS total_amount_all,
+                   SUM(CASE WHEN ec.name = '${MEAL_ALLOWANCE_CATEGORY}' THEN e.amount ELSE 0 END) OVER() AS total_meal_allowance`
+                : ''
+            }
      FROM expenses e
      JOIN expense_categories ec ON ec.id = e.category_id
      ${whereClause}
@@ -39,9 +52,64 @@ export const list = async (req, res) => {
   const { rows } = await pool.query(query, params);
 
   if (pagination) {
-    return res.json({ data: rows.map(mapExpense), total: extractTotal(rows), page: pagination.page, pageSize: pagination.pageSize });
+    const totalAmount = rows.length > 0 ? Number(rows[0].total_amount_all) : 0;
+    const totalMealAllowance = rows.length > 0 ? Number(rows[0].total_meal_allowance) : 0;
+    return res.json({
+      data: rows.map(mapExpense),
+      total: extractTotal(rows),
+      totalAmount,
+      totalMealAllowance,
+      totalOther: totalAmount - totalMealAllowance,
+      page: pagination.page,
+      pageSize: pagination.pageSize,
+    });
   }
   res.json(rows.map(mapExpense));
+};
+
+export const exportExpenses = async (req, res) => {
+  const { from, to, format } = req.query;
+
+  if (!from || !to) {
+    return res.status(400).json({ error: 'VALIDATION_ERROR', message: 'Query param from dan to wajib diisi' });
+  }
+  if (!['pdf', 'xlsx'].includes(format)) {
+    return res.status(400).json({ error: 'VALIDATION_ERROR', message: "Query param format wajib 'pdf' atau 'xlsx'" });
+  }
+
+  const params = [from, to];
+  const conditions = [`e.expense_date BETWEEN $1 AND $2`];
+
+  if (req.user.role !== 'owner') {
+    params.push(req.user.branchId);
+    conditions.push(`e.branch_id = $${params.length}`);
+  }
+
+  const { rows } = await pool.query(
+    `SELECT e.id, e.category_id, ec.name AS category_name, e.amount, e.description, e.expense_date
+     FROM expenses e
+     JOIN expense_categories ec ON ec.id = e.category_id
+     WHERE ${conditions.join(' AND ')}
+     ORDER BY e.expense_date ASC, e.created_at ASC`,
+    params
+  );
+
+  const expenses = rows.map(mapExpense);
+  const totalAmount = expenses.reduce((sum, e) => sum + e.amount, 0);
+  const totalMealAllowance = expenses
+    .filter((e) => e.categoryName === MEAL_ALLOWANCE_CATEGORY)
+    .reduce((sum, e) => sum + e.amount, 0);
+  const totals = { totalAmount, totalMealAllowance, totalOther: totalAmount - totalMealAllowance };
+
+  if (format === 'pdf') {
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="pengeluaran-${from}_${to}.pdf"`);
+    return ReportExportService.generateExpensesPdfReport(res, { from, to, expenses, totals });
+  }
+
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition', `attachment; filename="pengeluaran-${from}_${to}.xlsx"`);
+  await ReportExportService.generateExpensesExcelReport(res, { from, to, expenses, totals });
 };
 
 export const create = async (req, res) => {

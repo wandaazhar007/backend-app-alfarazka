@@ -1,6 +1,21 @@
 import pool from '../config/db.js';
 import todayJakarta from '../utils/todayJakarta.js';
 
+// Dipakai getKelilingBreakdown/getTokoBreakdown/getPaketBreakdown supaya masing-masing
+// bisa menerima `date` (exact match, dipakai AdminDashboard/OwnerDashboard/StockMorningPage
+// yang cuma butuh satu hari) ATAU `from`+`to` (rentang tanggal, dipakai halaman Laporan) —
+// tanpa mengubah kontrak lama untuk caller yang masih pakai `date`.
+function buildDateOp(params, { date, from, to }) {
+  if (date) {
+    params.push(date);
+    const idx = params.length;
+    return (col) => `${col} = $${idx}`;
+  }
+  params.push(from, to);
+  const idx = params.length;
+  return (col) => `${col} BETWEEN $${idx - 1} AND $${idx}`;
+}
+
 // Sales trend for the last N days (from daily_closings, cash basis — the same
 // basis used for gross_profit) — used for the Owner dashboard chart
 // (docs/07_DESIGN_SYSTEM.md §13).
@@ -78,15 +93,15 @@ export async function getSellerComparison({ branchId, from, to }) {
 // The top-level `summary` represents the GRAND TOTAL on a cash basis (money
 // actually received that day, using the same formula as gross_profit in
 // DailyClosingService) — not just mobile sales.
-export async function getDailyReport({ branchId, date }) {
+export async function getDailyReport({ branchId, date, from, to }) {
   // Paralel — lebih cepat dari sequential. Batas jumlah koneksi DB yang aman
   // ditangani oleh `pool.max` (lihat config/db.js), yang otomatis mengantre
   // query kalau semua koneksi lagi dipakai, jadi tidak perlu diserialkan manual
   // di sini.
   const [keliling, toko, paket] = await Promise.all([
-    getKelilingBreakdown({ branchId, date }),
-    getTokoBreakdown({ branchId, date }),
-    getPaketBreakdown({ branchId, date }),
+    getKelilingBreakdown({ branchId, date, from, to }),
+    getTokoBreakdown({ branchId, date, from, to }),
+    getPaketBreakdown({ branchId, date, from, to }),
   ]);
 
   const totalCash = keliling.summary.totalCash + toko.summary.cash + paket.summary.cash;
@@ -104,14 +119,15 @@ export async function getDailyReport({ branchId, date }) {
     totalQtySold: keliling.summary.totalQtySold,
   };
 
-  return { date, keliling, toko, paket, summary };
+  return { date, from, to, keliling, toko, paket, summary };
 }
 
 // Formula based on docs/01_DATA_MODEL.md, "Key Calculation Notes":
 // - Daily sales per seller = SUM(payments.amount where method='cash' for that seller's sales on that day) + the seller's qris_settlements.amount for that day
 // - Bread sold per seller = SUM(qty_out - qty_returned) from that day's stock_movements
-export async function getKelilingBreakdown({ branchId, date }) {
-  const params = [date];
+export async function getKelilingBreakdown({ branchId, date, from, to }) {
+  const params = [];
+  const dateOp = buildDateOp(params, { date, from, to });
   let branchFilterSellers = '';
   let branchFilterSales = '';
   let branchFilterStock = '';
@@ -128,7 +144,7 @@ export async function getKelilingBreakdown({ branchId, date }) {
        SELECT s.seller_id, SUM(p.amount) AS cash_total
        FROM sales s
        JOIN payments p ON p.sale_id = s.id AND p.method = 'cash'
-       WHERE s.sale_date = $1 AND s.seller_id IS NOT NULL ${branchFilterSales}
+       WHERE ${dateOp('s.sale_date')} AND s.seller_id IS NOT NULL ${branchFilterSales}
        GROUP BY s.seller_id
      ),
      stock_agg AS (
@@ -136,22 +152,28 @@ export async function getKelilingBreakdown({ branchId, date }) {
               bool_and(sm.returned_at IS NOT NULL) AS is_fully_returned,
               bool_or(sm.needs_resettlement) AS needs_resettlement
        FROM stock_movements sm
-       WHERE sm.movement_date = $1 ${branchFilterStock}
+       WHERE ${dateOp('sm.movement_date')} ${branchFilterStock}
        GROUP BY sm.seller_id
+     ),
+     qris_agg AS (
+       SELECT qs.seller_id, SUM(qs.amount) AS qris_total, bool_or(true) AS has_qris_record
+       FROM qris_settlements qs
+       WHERE ${dateOp('qs.settlement_date')}
+       GROUP BY qs.seller_id
      )
      SELECT se.id AS seller_id, u.name AS seller_name,
             COALESCE(cash_agg.cash_total, 0) AS cash,
-            COALESCE(qs.amount, 0) AS qris,
+            COALESCE(qris_agg.qris_total, 0) AS qris,
             COALESCE(stock_agg.qty_out_total, 0) AS qty_out,
             COALESCE(stock_agg.qty_returned_total, 0) AS qty_returned,
             COALESCE(stock_agg.is_fully_returned, false) AS is_fully_returned,
             COALESCE(stock_agg.needs_resettlement, false) AS needs_resettlement,
             (cash_agg.seller_id IS NOT NULL) AS has_cash_record,
-            (qs.id IS NOT NULL) AS has_qris_record
+            COALESCE(qris_agg.has_qris_record, false) AS has_qris_record
      FROM sellers se
      JOIN users u ON u.id = se.user_id
      LEFT JOIN cash_agg ON cash_agg.seller_id = se.id
-     LEFT JOIN qris_settlements qs ON qs.seller_id = se.id AND qs.settlement_date = $1
+     LEFT JOIN qris_agg ON qris_agg.seller_id = se.id
      LEFT JOIN stock_agg ON stock_agg.seller_id = se.id
      WHERE se.is_active = true ${branchFilterSellers}
      ORDER BY u.name ASC`,
@@ -196,8 +218,9 @@ export async function getKelilingBreakdown({ branchId, date }) {
 
 // Store sales: mini POS, always paid in full at the time of purchase
 // (cash + QRIS = total_amount, validated during creation).
-async function getTokoBreakdown({ branchId, date }) {
-  const params = [date];
+async function getTokoBreakdown({ branchId, date, from, to }) {
+  const params = [];
+  const dateOp = buildDateOp(params, { date, from, to });
   let branchFilter = '';
   if (branchId) {
     params.push(branchId);
@@ -211,7 +234,7 @@ async function getTokoBreakdown({ branchId, date }) {
               COALESCE(SUM(p.amount) FILTER (WHERE p.method = 'qris'), 0) AS qris
        FROM sales s
        LEFT JOIN payments p ON p.sale_id = s.id
-       WHERE s.sale_type = 'toko' AND s.sale_date = $1 ${branchFilter}
+       WHERE s.sale_type = 'toko' AND ${dateOp('s.sale_date')} ${branchFilter}
        GROUP BY s.id
        ORDER BY s.created_at`,
       params
@@ -221,7 +244,7 @@ async function getTokoBreakdown({ branchId, date }) {
        FROM sale_items si
        JOIN sales s ON s.id = si.sale_id
        LEFT JOIN products pr ON pr.id = si.product_id
-       WHERE s.sale_type = 'toko' AND s.sale_date = $1 ${branchFilter}
+       WHERE s.sale_type = 'toko' AND ${dateOp('s.sale_date')} ${branchFilter}
        ORDER BY si.id`,
       params
     ),
@@ -261,8 +284,9 @@ async function getTokoBreakdown({ branchId, date }) {
 
 // Package sales: can be paid as a down payment (not fully paid). `cash`/`qris` = money received that day (sale_date == down payment/settlement date),
 // `totalNilaiPaket` = full contract value, `outstanding` = current outstanding receivable (can change if there are settlements on other days — see the receivables module for complete payment history).
-async function getPaketBreakdown({ branchId, date }) {
-  const params = [date];
+async function getPaketBreakdown({ branchId, date, from, to }) {
+  const params = [];
+  const dateOp = buildDateOp(params, { date, from, to });
   let branchFilter = '';
   if (branchId) {
     params.push(branchId);
@@ -279,7 +303,7 @@ async function getPaketBreakdown({ branchId, date }) {
      LEFT JOIN customers c ON c.id = s.customer_id
      LEFT JOIN payments p ON p.sale_id = s.id
      LEFT JOIN receivables r ON r.sale_id = s.id
-     WHERE s.sale_type = 'paket' AND s.sale_date = $1 ${branchFilter}
+     WHERE s.sale_type = 'paket' AND ${dateOp('s.sale_date')} ${branchFilter}
      GROUP BY s.id, c.name, r.due_date, r.status, r.total_amount, r.amount_paid
      ORDER BY s.created_at`,
     params

@@ -20,5 +20,12 @@ router.get(
   RequireRole(['admin', 'owner']),
   DailyClosingController.list
 );
+router.get(
+  '/api/daily-closings/range-totals',
+  VerifyFirebaseToken,
+  CheckLicense,
+  RequireRole(['admin', 'owner']),
+  DailyClosingController.rangeTotals
+);
 
 export default router;

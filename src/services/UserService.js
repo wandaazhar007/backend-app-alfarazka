@@ -85,6 +85,21 @@ export async function resetPassword({ userId }) {
   return { tempPassword };
 }
 
+// Nama & No. HP hidup di tabel `users` untuk KEDUA role (admin dan seller —
+// `sellers` cuma nyimpen profil tambahan spesifik keliling, tidak punya kolom
+// name/phone sendiri), jadi satu fungsi ini dipakai untuk keduanya lewat
+// halaman "Tambah User" (edit dari tabel Daftar User).
+export async function updateNameAndPhone({ userId, name, phone }) {
+  const { rows } = await pool.query(
+    `UPDATE users SET name = $1, phone = $2 WHERE id = $3 RETURNING id, name, email, phone, is_active, created_at`,
+    [name, phone ?? null, userId]
+  );
+  if (rows.length === 0) {
+    throw Object.assign(new Error('User tidak ditemukan'), { status: 404 });
+  }
+  return rows[0];
+}
+
 export async function listUsers({ branchId, role, pagination }) {
   const params = [role];
   let query = `

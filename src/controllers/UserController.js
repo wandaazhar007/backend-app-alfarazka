@@ -57,6 +57,22 @@ export const create = async (req, res) => {
   }
 };
 
+export const update = async (req, res) => {
+  const { id } = req.params;
+  const { name, phone } = req.body;
+
+  if (!name || !name.trim()) {
+    return res.status(400).json({ error: 'VALIDATION_ERROR', message: 'name wajib diisi' });
+  }
+
+  try {
+    const user = await UserService.updateNameAndPhone({ userId: id, name, phone: phone || null });
+    res.json(user);
+  } catch (err) {
+    res.status(err.status ?? 500).json({ error: 'USER_UPDATE_FAILED', message: err.message });
+  }
+};
+
 export const resetPassword = async (req, res) => {
   const { id } = req.params;
 

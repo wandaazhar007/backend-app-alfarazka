@@ -92,12 +92,22 @@ export const mySales = async (req, res) => {
     return res.status(403).json({ error: 'NOT_A_SELLER', message: 'Akun ini bukan penjual keliling.' });
   }
 
-  const date = req.query.date || yesterdayJakarta();
-  const report = await ReportService.getDailyReport({ branchId: seller.branch_id, date });
+  const { from, to } = req.query;
+  // `from`/`to` (rentang, dipakai date-range picker di SellerDashboard) diprioritaskan
+  // di atas `date` (satu hari, default kemarin) — dua-duanya tetap didukung supaya
+  // tidak ada kontrak lama yang berubah.
+  const usingRange = Boolean(from && to);
+  const date = usingRange ? undefined : req.query.date || yesterdayJakarta();
+
+  const report = await ReportService.getDailyReport(
+    usingRange ? { branchId: seller.branch_id, from, to } : { branchId: seller.branch_id, date }
+  );
   const row = report.keliling.sellers.find((s) => s.sellerId === seller.id);
 
   res.json({
     date,
+    from: usingRange ? from : undefined,
+    to: usingRange ? to : undefined,
     ...(row ?? {
       sellerId: seller.id,
       sellerName: seller.name,
@@ -109,4 +119,19 @@ export const mySales = async (req, res) => {
       qtySold: 0,
     }),
   });
+};
+
+export const mySalesTrend = async (req, res) => {
+  const seller = await findOwnSeller(req.user.id);
+  if (!seller) {
+    return res.status(403).json({ error: 'NOT_A_SELLER', message: 'Akun ini bukan penjual keliling.' });
+  }
+
+  const { from, to } = req.query;
+  if (!from || !to) {
+    return res.status(400).json({ error: 'VALIDATION_ERROR', message: 'Query param from dan to wajib diisi' });
+  }
+
+  const trend = await ReportService.getSellerDailyTrend({ sellerId: seller.id, from, to });
+  res.json(trend);
 };

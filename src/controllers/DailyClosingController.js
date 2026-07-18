@@ -25,3 +25,21 @@ export const list = async (req, res) => {
   const closings = await DailyClosingService.listClosings({ branchId, from, to });
   res.json(closings);
 };
+
+// Live-computed totals (HPP/laba) untuk sebuah rentang tanggal — BEDA dari list()
+// di atas yang cuma membaca baris `daily_closings` yang SUDAH di-generate (bisa
+// bolong kalau ada hari yang belum ditutup buku, termasuk hari ini). Dipakai
+// Dashboard Owner supaya ringkasan tetap akurat walau rentangnya mencakup hari
+// yang belum "Tutup Buku".
+export const rangeTotals = async (req, res) => {
+  const { from, to } = req.query;
+
+  if (!from || !to) {
+    return res.status(400).json({ error: 'VALIDATION_ERROR', message: 'Query param from dan to wajib diisi' });
+  }
+
+  const branchId = req.user.role === 'admin' ? req.user.branchId : undefined;
+
+  const totals = await DailyClosingService.computeRangeTotals({ branchId, from, to });
+  res.json(totals);
+};

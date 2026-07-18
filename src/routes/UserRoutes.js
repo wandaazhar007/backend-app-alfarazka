@@ -8,6 +8,7 @@ const router = Router();
 
 router.get('/api/users', VerifyFirebaseToken, CheckLicense, RequireRole(['owner']), UserController.list);
 router.post('/api/users', VerifyFirebaseToken, CheckLicense, RequireRole(['owner']), UserController.create);
+router.put('/api/users/:id', VerifyFirebaseToken, CheckLicense, RequireRole(['owner']), UserController.update);
 router.post(
   '/api/users/:id/reset-password',
   VerifyFirebaseToken,

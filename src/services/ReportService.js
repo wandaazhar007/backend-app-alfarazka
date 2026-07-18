@@ -86,6 +86,40 @@ export async function getSellerComparison({ branchId, from, to }) {
   return rows.map((row) => ({ sellerId: row.seller_id, sellerName: row.seller_name, total: Number(row.total) }));
 }
 
+// Tren penjualan (cash+qris) PER HARI untuk SATU penjual dalam sebuah rentang tanggal
+// — dipakai chart di SellerDashboard, beda dari getSellerComparison() di atas yang
+// menjumlahkan SEMUA penjual jadi satu angka per penjual (bukan per hari).
+// `generate_series` memastikan hari tanpa transaksi tetap muncul sebagai titik 0
+// (bukan hilang dari chart).
+export async function getSellerDailyTrend({ sellerId, from, to }) {
+  const { rows } = await pool.query(
+    `WITH days AS (
+       SELECT generate_series($2::date, $3::date, '1 day')::date AS day
+     ),
+     cash_agg AS (
+       SELECT s.sale_date AS day, SUM(p.amount) AS total
+       FROM sales s
+       JOIN payments p ON p.sale_id = s.id AND p.method = 'cash'
+       WHERE s.seller_id = $1 AND s.sale_date BETWEEN $2 AND $3
+       GROUP BY s.sale_date
+     ),
+     qris_agg AS (
+       SELECT settlement_date AS day, SUM(amount) AS total
+       FROM qris_settlements
+       WHERE seller_id = $1 AND settlement_date BETWEEN $2 AND $3
+       GROUP BY settlement_date
+     )
+     SELECT days.day, COALESCE(cash_agg.total, 0) + COALESCE(qris_agg.total, 0) AS total
+     FROM days
+     LEFT JOIN cash_agg ON cash_agg.day = days.day
+     LEFT JOIN qris_agg ON qris_agg.day = days.day
+     ORDER BY days.day ASC`,
+    [sellerId, from, to]
+  );
+
+  return rows.map((row) => ({ date: row.day, total: Number(row.total) }));
+}
+
 // Consolidated daily report: mobile sales + store sales + package sales in a
 // single response.
 // `keliling` keeps its original per-seller structure so consumers that only

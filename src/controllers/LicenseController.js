@@ -40,7 +40,10 @@ export const checkout = async (req, res) => {
     return res.status(404).json({ error: 'NOT_FOUND', message: 'Lisensi untuk organisasi ini tidak ditemukan' });
   }
 
-  const orderId = `LIC-${req.user.branchId}-${Date.now()}`;
+  // Midtrans order_id max 50 karakter — branchId penuh (UUID, 36 karakter) bikin ini
+  // kepanjangan (54 karakter), jadi dipotong ke 8 karakter pertama saja (tetap cukup
+  // unik dikombinasikan dengan timestamp, dan masih bisa dikenali manual di dashboard).
+  const orderId = `LIC-${req.user.branchId.slice(0, 8)}-${Date.now()}`;
 
   const snap = new midtransClient.Snap({
     isProduction: process.env.MIDTRANS_IS_PRODUCTION === 'true',
@@ -66,83 +69,99 @@ export const checkout = async (req, res) => {
   }
 };
 
+// Midtrans mewajibkan webhook SELALU dijawab HTTP 200 supaya dianggap "terkirim sukses"
+// (termasuk oleh fitur "Test Notification URL" di dashboard mereka) — notifikasi yang
+// tidak valid (payload kurang lengkap, signature tidak cocok, order tidak dikenal) harus
+// di-IGNORE secara internal, BUKAN ditolak dengan status error, walau begitu Midtrans akan
+// menganggap pengiriman gagal dan retry terus/melaporkan endpoint bermasalah.
+// Ref: https://docs.midtrans.com/reference/handle-notifications
 export const midtransCallback = async (req, res) => {
-  const { order_id: orderId, status_code: statusCode, gross_amount: grossAmount, signature_key: signatureKey } =
-    req.body;
+  try {
+    const { order_id: orderId, status_code: statusCode, gross_amount: grossAmount, signature_key: signatureKey } =
+      req.body;
 
-  if (!orderId || !statusCode || !grossAmount || !signatureKey) {
-    return res.status(400).json({ error: 'VALIDATION_ERROR', message: 'Payload webhook tidak lengkap' });
-  }
+    if (!orderId || !statusCode || !grossAmount || !signatureKey) {
+      console.warn('Midtrans webhook diabaikan: payload tidak lengkap', req.body);
+      return res.status(200).json({ received: true, ignored: 'incomplete_payload' });
+    }
 
-  const expectedSignature = crypto
-    .createHash('sha512')
-    .update(`${orderId}${statusCode}${grossAmount}${process.env.MIDTRANS_SERVER_KEY}`)
-    .digest('hex');
+    const expectedSignature = crypto
+      .createHash('sha512')
+      .update(`${orderId}${statusCode}${grossAmount}${process.env.MIDTRANS_SERVER_KEY}`)
+      .digest('hex');
 
-  if (signatureKey !== expectedSignature) {
-    return res.status(403).json({ error: 'INVALID_SIGNATURE', message: 'Signature webhook tidak valid' });
-  }
+    if (signatureKey !== expectedSignature) {
+      console.warn('Midtrans webhook diabaikan: signature tidak valid untuk order', orderId);
+      return res.status(200).json({ received: true, ignored: 'invalid_signature' });
+    }
 
-  const { rows: paymentRows } = await pool.query('SELECT * FROM license_payments WHERE midtrans_order_id = $1', [
-    orderId,
-  ]);
-  if (paymentRows.length === 0) {
-    return res.status(404).json({ error: 'ORDER_NOT_FOUND', message: 'Order tidak ditemukan' });
-  }
-  const payment = paymentRows[0];
+    const { rows: paymentRows } = await pool.query('SELECT * FROM license_payments WHERE midtrans_order_id = $1', [
+      orderId,
+    ]);
+    if (paymentRows.length === 0) {
+      console.warn('Midtrans webhook diabaikan: order tidak ditemukan', orderId);
+      return res.status(200).json({ received: true, ignored: 'order_not_found' });
+    }
+    const payment = paymentRows[0];
 
-  const transactionStatus = req.body.transaction_status;
+    const transactionStatus = req.body.transaction_status;
 
-  const isPaid = ['settlement', 'capture'].includes(transactionStatus);
+    const isPaid = ['settlement', 'capture'].includes(transactionStatus);
 
-  await pool.query(
-    `UPDATE license_payments
-     SET status = $1,
-         midtrans_transaction_id = $2,
-         payment_method = $3,
-         paid_at = CASE WHEN $6 THEN now() ELSE paid_at END,
-         raw_notification = $4
-     WHERE id = $5`,
-    [
-      transactionStatus,
-      req.body.transaction_id ?? null,
-      req.body.payment_type ?? null,
-      JSON.stringify(req.body),
-      payment.id,
-      isPaid,
-    ]
-  );
-
-  if (isPaid) {
-    const { rows: licenseRows } = await pool.query('SELECT * FROM licenses WHERE id = $1', [payment.license_id]);
-    const branchId = licenseRows[0].branch_id;
-
-    const extended = await LicenseService.extendLicense({ branchId, planId: payment.plan_id });
-
-    const { rows: ownerRows } = await pool.query(
-      `SELECT u.email, b.name AS branch_name
-       FROM users u
-       JOIN branches b ON b.id = u.branch_id
-       JOIN roles r ON r.id = u.role_id
-       WHERE u.branch_id = $1 AND r.name = 'owner'
-       LIMIT 1`,
-      [branchId]
+    await pool.query(
+      `UPDATE license_payments
+       SET status = $1,
+           midtrans_transaction_id = $2,
+           payment_method = $3,
+           paid_at = CASE WHEN $6 THEN now() ELSE paid_at END,
+           raw_notification = $4
+       WHERE id = $5`,
+      [
+        transactionStatus,
+        req.body.transaction_id ?? null,
+        req.body.payment_type ?? null,
+        JSON.stringify(req.body),
+        payment.id,
+        isPaid,
+      ]
     );
 
-    try {
-      await MailService.sendPaymentSuccessEmail({
-        clientEmail: ownerRows[0]?.email,
-        branchName: ownerRows[0]?.branch_name ?? 'Alfarazka Bakery',
-        planName: extended.planName,
-        amount: payment.amount,
-        expiresAt: extended.expiresAt,
-      });
-    } catch (err) {
-      console.error('Gagal kirim email sukses bayar:', err.message);
-    }
-  }
+    if (isPaid) {
+      const { rows: licenseRows } = await pool.query('SELECT * FROM licenses WHERE id = $1', [payment.license_id]);
+      const branchId = licenseRows[0].branch_id;
 
-  res.status(200).json({ received: true });
+      const extended = await LicenseService.extendLicense({ branchId, planId: payment.plan_id });
+
+      const { rows: ownerRows } = await pool.query(
+        `SELECT u.email, b.name AS branch_name
+         FROM users u
+         JOIN branches b ON b.id = u.branch_id
+         JOIN roles r ON r.id = u.role_id
+         WHERE u.branch_id = $1 AND r.name = 'owner'
+         LIMIT 1`,
+        [branchId]
+      );
+
+      try {
+        await MailService.sendPaymentSuccessEmail({
+          clientEmail: ownerRows[0]?.email,
+          branchName: ownerRows[0]?.branch_name ?? 'Alfarazka Bakery',
+          planName: extended.planName,
+          amount: payment.amount,
+          expiresAt: extended.expiresAt,
+        });
+      } catch (err) {
+        console.error('Gagal kirim email sukses bayar:', err.message);
+      }
+    }
+
+    res.status(200).json({ received: true });
+  } catch (err) {
+    // Tetap balas 200 ke Midtrans supaya tidak dianggap gagal terkirim/di-retry terus —
+    // errornya sendiri tetap harus terlihat di log server untuk investigasi manual.
+    console.error('Midtrans webhook: error tak terduga saat memproses notifikasi:', err);
+    res.status(200).json({ received: true, error: 'internal_error_logged' });
+  }
 };
 
 export const payments = async (req, res) => {

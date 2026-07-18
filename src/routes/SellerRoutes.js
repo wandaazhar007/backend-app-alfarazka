@@ -18,5 +18,12 @@ router.get(
   SellerController.todayStock
 );
 router.get('/api/seller/my-sales', VerifyFirebaseToken, CheckLicense, RequireRole(['seller']), SellerController.mySales);
+router.get(
+  '/api/seller/my-sales-trend',
+  VerifyFirebaseToken,
+  CheckLicense,
+  RequireRole(['seller']),
+  SellerController.mySalesTrend
+);
 
 export default router;

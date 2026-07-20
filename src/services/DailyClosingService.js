@@ -3,15 +3,15 @@ import pool from '../config/db.js';
 // Cost of Goods Sold — category kept in expense_categories for master-data/history
 // purposes, but no longer subtracted from profit (see totalExpenses below): once
 // totalCogs is computed automatically from cost_price × qty sold, counting a manual
-// "bahan_baku" expense entry too would double-count the same cost.
-const COGS_EXPENSE_CATEGORY = 'bahan_baku';
+// "Bahan Baku" expense entry too would double-count the same cost.
+const COGS_EXPENSE_CATEGORY = 'Bahan Baku';
 
 // gross_profit = total combined sales (mobile + store + package) - total COGS (harga
 // pokok penjualan, computed automatically from products.cost_price × qty sold — NOT
 // from manual expense entries, so it no longer depends on the admin remembering to
 // log raw-material purchases).
 // net_profit = gross_profit - total OPERATIONAL expenses (gaji, sewa, listrik, uang
-// makan penjual, dll — excludes the 'bahan_baku' category, see COGS_EXPENSE_CATEGORY).
+// makan penjual, dll — excludes the 'Bahan Baku' category, see COGS_EXPENSE_CATEGORY).
 //
 // Cash basis: only money actually received on that day (cash/QRIS payments + mobile
 // QRIS settlements), NOT the value of package contracts that have not been fully

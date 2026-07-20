@@ -3,7 +3,7 @@ import { logAudit } from '../middlewares/AuditLogger.js';
 import { getPagination, extractTotal } from '../utils/pagination.js';
 import * as ReportExportService from '../services/ReportExportService.js';
 
-const MEAL_ALLOWANCE_CATEGORY = 'uang_makan_penjual';
+const MEAL_ALLOWANCE_CATEGORY = 'Uang Makan Penjual';
 
 export const list = async (req, res) => {
   const { date, from, to, category_id: categoryId } = req.query;

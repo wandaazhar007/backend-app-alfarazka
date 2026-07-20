@@ -2,6 +2,7 @@ import pool from '../config/db.js';
 import * as SellerService from '../services/SellerService.js';
 import * as StockMovementService from '../services/StockMovementService.js';
 import * as ReportService from '../services/ReportService.js';
+import * as SellerDebtService from '../services/SellerDebtService.js';
 import todayJakarta, { yesterdayJakarta } from '../utils/todayJakarta.js';
 import { getPagination } from '../utils/pagination.js';
 
@@ -134,4 +135,14 @@ export const mySalesTrend = async (req, res) => {
 
   const trend = await ReportService.getSellerDailyTrend({ sellerId: seller.id, from, to });
   res.json(trend);
+};
+
+export const myDebt = async (req, res) => {
+  const seller = await findOwnSeller(req.user.id);
+  if (!seller) {
+    return res.status(403).json({ error: 'NOT_A_SELLER', message: 'Akun ini bukan penjual keliling.' });
+  }
+
+  const outstanding = await SellerDebtService.getMyOutstandingTotal({ sellerId: seller.id });
+  res.json({ outstanding });
 };

@@ -25,5 +25,6 @@ router.get(
   RequireRole(['seller']),
   SellerController.mySalesTrend
 );
+router.get('/api/seller/my-debt', VerifyFirebaseToken, CheckLicense, RequireRole(['seller']), SellerController.myDebt);
 
 export default router;

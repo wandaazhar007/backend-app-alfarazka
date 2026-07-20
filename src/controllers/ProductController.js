@@ -8,7 +8,7 @@ export const list = async (req, res) => {
   const conditions = [];
   let query = `
     SELECT p.id, p.branch_id, p.name, p.category_id, pc.name AS category_name,
-           p.unit_price, p.cost_price, p.is_active, p.created_at,
+           p.unit_price, p.cost_price, p.commission_per_unit, p.is_active, p.created_at,
            (
              EXISTS (SELECT 1 FROM sale_items si WHERE si.product_id = p.id)
              OR EXISTS (SELECT 1 FROM stock_movements sm WHERE sm.product_id = p.id)
@@ -50,7 +50,7 @@ export const list = async (req, res) => {
 };
 
 export const create = async (req, res) => {
-  const { name, categoryId, unitPrice, costPrice, isActive } = req.body;
+  const { name, categoryId, unitPrice, costPrice, commissionPerUnit, isActive } = req.body;
 
   if (!name || unitPrice === undefined || costPrice === undefined) {
     return res.status(400).json({ error: 'VALIDATION_ERROR', message: 'name, unitPrice, dan costPrice wajib diisi' });
@@ -58,10 +58,10 @@ export const create = async (req, res) => {
 
   try {
     const { rows } = await pool.query(
-      `INSERT INTO products (branch_id, name, category_id, unit_price, cost_price, is_active)
-       VALUES ($1, $2, $3, $4, $5, COALESCE($6, true))
-       RETURNING id, branch_id, name, category_id, unit_price, cost_price, is_active, created_at`,
-      [req.user.branchId, name, categoryId ?? null, unitPrice, costPrice, isActive]
+      `INSERT INTO products (branch_id, name, category_id, unit_price, cost_price, commission_per_unit, is_active)
+       VALUES ($1, $2, $3, $4, $5, COALESCE($6, 0), COALESCE($7, true))
+       RETURNING id, branch_id, name, category_id, unit_price, cost_price, commission_per_unit, is_active, created_at`,
+      [req.user.branchId, name, categoryId ?? null, unitPrice, costPrice, commissionPerUnit, isActive]
     );
 
     res.status(201).json(mapProduct(await withCategoryName(rows[0])));
@@ -78,7 +78,7 @@ export const create = async (req, res) => {
 
 export const update = async (req, res) => {
   const { id } = req.params;
-  const { name, categoryId, unitPrice, costPrice, isActive } = req.body;
+  const { name, categoryId, unitPrice, costPrice, commissionPerUnit, isActive } = req.body;
 
   try {
     const { rows } = await pool.query(
@@ -87,10 +87,11 @@ export const update = async (req, res) => {
          category_id = COALESCE($2, category_id),
          unit_price = COALESCE($3, unit_price),
          cost_price = COALESCE($4, cost_price),
-         is_active = COALESCE($5, is_active)
-       WHERE id = $6
-       RETURNING id, branch_id, name, category_id, unit_price, cost_price, is_active, created_at`,
-      [name, categoryId, unitPrice, costPrice, isActive, id]
+         commission_per_unit = COALESCE($5, commission_per_unit),
+         is_active = COALESCE($6, is_active)
+       WHERE id = $7
+       RETURNING id, branch_id, name, category_id, unit_price, cost_price, commission_per_unit, is_active, created_at`,
+      [name, categoryId, unitPrice, costPrice, commissionPerUnit, isActive, id]
     );
 
     if (rows.length === 0) {
@@ -152,6 +153,7 @@ function mapProduct(row) {
     categoryName: row.category_name,
     unitPrice: Number(row.unit_price),
     costPrice: Number(row.cost_price),
+    commissionPerUnit: Number(row.commission_per_unit ?? 0),
     hasUsage: Boolean(row.has_usage),
     isActive: row.is_active,
     createdAt: row.created_at,

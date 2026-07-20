@@ -19,6 +19,8 @@ import customerRoutes from './routes/CustomerRoutes.js';
 import receivableRoutes from './routes/ReceivableRoutes.js';
 import auditLogRoutes from './routes/AuditLogRoutes.js';
 import licenseRoutes from './routes/LicenseRoutes.js';
+import sellerDebtRoutes from './routes/SellerDebtRoutes.js';
+import sellerPayrollRoutes from './routes/SellerPayrollRoutes.js';
 import { startLicenseCron } from './services/LicenseCron.js';
 import { startDailyClosingCron } from './services/DailyClosingCron.js';
 
@@ -45,6 +47,8 @@ app.use(customerRoutes);
 app.use(receivableRoutes);
 app.use(auditLogRoutes);
 app.use(licenseRoutes);
+app.use(sellerDebtRoutes);
+app.use(sellerPayrollRoutes);
 
 startLicenseCron();
 startDailyClosingCron();

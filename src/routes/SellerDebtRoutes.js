@@ -13,6 +13,13 @@ router.get(
   RequireRole(['admin', 'owner']),
   SellerDebtController.list
 );
+router.get(
+  '/api/seller-debts/expected',
+  VerifyFirebaseToken,
+  CheckLicense,
+  RequireRole(['admin', 'owner']),
+  SellerDebtController.getExpected
+);
 router.post(
   '/api/seller-debts/settle',
   VerifyFirebaseToken,

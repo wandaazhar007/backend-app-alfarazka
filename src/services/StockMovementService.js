@@ -156,7 +156,7 @@ export async function listMovements({ branchId, sellerId, date }) {
      JOIN users su ON su.id = s.user_id
      JOIN products p ON p.id = sm.product_id
      ${whereClause}
-     ORDER BY sm.movement_date DESC, su.name ASC, p.name ASC`,
+     ORDER BY sm.movement_date DESC, MIN(sm.created_at) OVER (PARTITION BY sm.seller_id, sm.movement_date) DESC, p.name ASC`,
     params
   );
 

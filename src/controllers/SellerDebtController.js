@@ -21,6 +21,20 @@ export const settle = async (req, res) => {
   res.json(debt);
 };
 
+// Preview LIVE nilai penjualan yang seharusnya disetor (tidak menyimpan apa pun) —
+// dipakai modal Setor di DailySettlementPage supaya admin bisa lihat target setoran
+// & selisihnya SAAT mengetik, sebelum klik Simpan (yang baru memanggil settle di atas).
+export const getExpected = async (req, res) => {
+  const { sellerId, date } = req.query;
+
+  if (!sellerId || !date) {
+    return res.status(400).json({ error: 'VALIDATION_ERROR', message: 'sellerId dan date wajib diisi' });
+  }
+
+  const expectedAmount = await SellerDebtService.computeExpectedAmount({ sellerId, date });
+  res.json({ expectedAmount });
+};
+
 export const createLoan = async (req, res) => {
   const { sellerId, date, amount, note } = req.body;
 

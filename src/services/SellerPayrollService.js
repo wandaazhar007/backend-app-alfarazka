@@ -56,7 +56,37 @@ export async function computeMonthlyPreview({ sellerId, branchId, periodMonth })
   const debtDeduction = Math.min(outstandingDebt, grossPayout);
   const netPayout = grossPayout - debtDeduction;
 
-  return { totalTierSalary, totalCommission, outstandingDebt, debtDeduction, netPayout, dailyBreakdown };
+  const unsettledDate = await findFirstUnsettledDate({ sellerId, monthStart, monthEnd });
+
+  return { totalTierSalary, totalCommission, outstandingDebt, debtDeduction, netPayout, dailyBreakdown, unsettledDate };
+}
+
+// Tanggal pertama (paling awal) dalam periode dimana penjual sudah bawa stok
+// (ada baris stock_movements) tapi BELUM setoran cash DAN/ATAU QRIS — pola
+// has_cash/has_qris sama seperti ReportService.getKelilingBreakdown &
+// StockMovementService.setReturnBatch, di sini per-hari (bukan agregat sebulan).
+async function findFirstUnsettledDate({ sellerId, monthStart, monthEnd }) {
+  const { rows } = await pool.query(
+    `SELECT stock_days.movement_date AS date
+     FROM (
+       SELECT DISTINCT sm.movement_date
+       FROM stock_movements sm
+       WHERE sm.seller_id = $1 AND sm.movement_date BETWEEN $2 AND $3
+     ) stock_days
+     WHERE NOT EXISTS (
+       SELECT 1 FROM sales s JOIN payments p ON p.sale_id = s.id AND p.method = 'cash'
+       WHERE s.seller_id = $1 AND s.sale_date = stock_days.movement_date AND s.sale_type = 'keliling'
+     )
+     OR NOT EXISTS (
+       SELECT 1 FROM qris_settlements qs
+       WHERE qs.seller_id = $1 AND qs.settlement_date = stock_days.movement_date
+     )
+     ORDER BY stock_days.movement_date ASC
+     LIMIT 1`,
+    [sellerId, monthStart, monthEnd]
+  );
+
+  return rows.length > 0 ? rows[0].date : null;
 }
 
 // Simpan hasil preview sebagai draft — bisa digenerate ulang berkali-kali SELAMA masih
@@ -64,6 +94,13 @@ export async function computeMonthlyPreview({ sellerId, branchId, periodMonth })
 // sudah 'paid'.
 export async function generateClosing({ sellerId, branchId, periodMonth, createdBy }) {
   const preview = await computeMonthlyPreview({ sellerId, branchId, periodMonth });
+
+  if (preview.unsettledDate) {
+    throw Object.assign(
+      new Error(`Penjual belum melakukan setoran pada tanggal ${preview.unsettledDate}, tidak bisa generate gaji.`),
+      { status: 409 }
+    );
+  }
 
   const { rows } = await pool.query(
     `INSERT INTO seller_payroll_closings

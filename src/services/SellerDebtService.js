@@ -194,6 +194,26 @@ export async function getMyOutstandingTotal({ sellerId }) {
   return Number(rows[0].total);
 }
 
+// Total per sumber (kekurangan setoran vs pinjaman) yang TERJADI dalam rentang tanggal
+// tertentu (berdasarkan debt_date, bukan status lunas/belum) — dipakai card "Minus
+// Setoran" & "Pinjaman" di section Penghasilan SellerDashboard, supaya sejalan dengan
+// rentang yang sama dipakai utk menghitung gaji/komisi periode itu.
+export async function getMyDebtBySourceForRange({ sellerId, from, to }) {
+  const { rows } = await pool.query(
+    `SELECT source, COALESCE(SUM(total_amount), 0) AS total
+     FROM seller_debts
+     WHERE seller_id = $1 AND debt_date BETWEEN $2 AND $3
+     GROUP BY source`,
+    [sellerId, from, to]
+  );
+
+  const bySource = Object.fromEntries(rows.map((r) => [r.source, Number(r.total)]));
+  return {
+    shortfallTotal: bySource.kekurangan_setoran ?? 0,
+    loanTotal: bySource.pinjaman ?? 0,
+  };
+}
+
 function mapDebt(row) {
   return {
     id: row.id,

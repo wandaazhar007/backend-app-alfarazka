@@ -3,6 +3,7 @@ import * as SellerService from '../services/SellerService.js';
 import * as StockMovementService from '../services/StockMovementService.js';
 import * as ReportService from '../services/ReportService.js';
 import * as SellerDebtService from '../services/SellerDebtService.js';
+import * as SellerPayrollService from '../services/SellerPayrollService.js';
 import todayJakarta, { yesterdayJakarta } from '../utils/todayJakarta.js';
 import { getPagination } from '../utils/pagination.js';
 
@@ -145,4 +146,19 @@ export const myDebt = async (req, res) => {
 
   const outstanding = await SellerDebtService.getMyOutstandingTotal({ sellerId: seller.id });
   res.json({ outstanding });
+};
+
+export const myEarnings = async (req, res) => {
+  const seller = await findOwnSeller(req.user.id);
+  if (!seller) {
+    return res.status(403).json({ error: 'NOT_A_SELLER', message: 'Akun ini bukan penjual keliling.' });
+  }
+
+  const { from, to } = req.query;
+  if (!from || !to) {
+    return res.status(400).json({ error: 'VALIDATION_ERROR', message: 'Query param from dan to wajib diisi' });
+  }
+
+  const earnings = await SellerPayrollService.computeEarningsRange({ sellerId: seller.id, from, to });
+  res.json(earnings);
 };

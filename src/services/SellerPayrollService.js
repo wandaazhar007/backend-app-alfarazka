@@ -16,16 +16,13 @@ export function computeTierSalary(qtySold) {
   return tier.salary;
 }
 
-// Preview gaji sebulan — dihitung LIVE dari stock_movements+products (tidak disimpan
-// harian), dikelompokkan per hari penjual itu benar-benar bawa stok. Roti (commission_per_unit
-// kosong/0) menentukan tier gaji harian; produk komisi (commission_per_unit > 0) dihitung
-// terpisah sebagai komisi, TIDAK ikut qty tier (dikonfirmasi user).
-export async function computeMonthlyPreview({ sellerId, branchId, periodMonth }) {
-  const [year, month] = periodMonth.split('-').map(Number);
-  const monthStart = periodMonth;
-  const lastDay = new Date(year, month, 0).getDate();
-  const monthEnd = `${periodMonth.slice(0, 8)}${String(lastDay).padStart(2, '0')}`;
-
+// Breakdown harian gaji tier + komisi untuk rentang tanggal manapun — dipakai baik
+// oleh computeMonthlyPreview() (rentang = 1 bulan kalender, buat proses payroll admin)
+// maupun computeEarningsRange() (rentang bebas pilihan penjual sendiri, buat section
+// "Penghasilan" di SellerDashboard). Roti (commission_per_unit kosong/0) menentukan
+// tier gaji harian; produk komisi (commission_per_unit > 0) dihitung terpisah sebagai
+// komisi, TIDAK ikut qty tier (dikonfirmasi user).
+async function computeDailyBreakdown({ sellerId, from, to }) {
   const { rows: dailyRows } = await pool.query(
     `SELECT sm.movement_date AS date,
             SUM(CASE WHEN COALESCE(p.commission_per_unit, 0) = 0 THEN sm.qty_out - sm.qty_returned ELSE 0 END) AS roti_qty,
@@ -36,7 +33,7 @@ export async function computeMonthlyPreview({ sellerId, branchId, periodMonth })
      WHERE sm.seller_id = $1 AND sm.movement_date BETWEEN $2 AND $3
      GROUP BY sm.movement_date
      ORDER BY sm.movement_date ASC`,
-    [sellerId, monthStart, monthEnd]
+    [sellerId, from, to]
   );
 
   const dailyBreakdown = dailyRows.map((row) => {
@@ -50,11 +47,27 @@ export async function computeMonthlyPreview({ sellerId, branchId, periodMonth })
     };
   });
 
-  const totalTierSalary = dailyBreakdown.reduce((sum, d) => sum + d.tierSalary, 0);
-  const totalCommission = dailyBreakdown.reduce((sum, d) => sum + d.commissionAmount, 0);
-  const totalRotiQty = dailyBreakdown.reduce((sum, d) => sum + d.rotiQty, 0);
-  const totalCommissionQty = dailyBreakdown.reduce((sum, d) => sum + d.commissionQty, 0);
-  const daysWorked = dailyBreakdown.length;
+  return {
+    dailyBreakdown,
+    totalTierSalary: dailyBreakdown.reduce((sum, d) => sum + d.tierSalary, 0),
+    totalCommission: dailyBreakdown.reduce((sum, d) => sum + d.commissionAmount, 0),
+    totalRotiQty: dailyBreakdown.reduce((sum, d) => sum + d.rotiQty, 0),
+    totalCommissionQty: dailyBreakdown.reduce((sum, d) => sum + d.commissionQty, 0),
+    daysWorked: dailyBreakdown.length,
+  };
+}
+
+// Preview gaji sebulan (proses payroll admin) — dihitung LIVE dari stock_movements+products
+// (tidak disimpan harian).
+export async function computeMonthlyPreview({ sellerId, branchId, periodMonth }) {
+  const [year, month] = periodMonth.split('-').map(Number);
+  const monthStart = periodMonth;
+  const lastDay = new Date(year, month, 0).getDate();
+  const monthEnd = `${periodMonth.slice(0, 8)}${String(lastDay).padStart(2, '0')}`;
+
+  const { dailyBreakdown, totalTierSalary, totalCommission, totalRotiQty, totalCommissionQty, daysWorked } =
+    await computeDailyBreakdown({ sellerId, from: monthStart, to: monthEnd });
+
   const outstandingDebt = await SellerDebtService.getMyOutstandingTotal({ sellerId });
   const grossPayout = totalTierSalary + totalCommission;
   // Tidak pernah memotong lebih dari payout kotornya sendiri (tidak sampai minus).
@@ -74,6 +87,31 @@ export async function computeMonthlyPreview({ sellerId, branchId, periodMonth })
     netPayout,
     dailyBreakdown,
     unsettledDate,
+  };
+}
+
+// Ringkasan penghasilan (gaji tier + komisi) untuk rentang tanggal BEBAS (bukan harus
+// satu bulan kalender) — dipakai section "Penghasilan" di SellerDashboard, jadi penjual
+// bisa lihat penghasilannya sendiri utk rentang apa saja. Beda dari computeMonthlyPreview:
+// tidak menghitung potongan utang/status setoran (itu urusan proses payroll admin,
+// sudah ada StatCard "Utang Saat Ini" terpisah di dashboard).
+export async function computeEarningsRange({ sellerId, from, to }) {
+  const { totalTierSalary, totalCommission, totalRotiQty, totalCommissionQty, daysWorked } = await computeDailyBreakdown({
+    sellerId,
+    from,
+    to,
+  });
+  const { shortfallTotal, loanTotal } = await SellerDebtService.getMyDebtBySourceForRange({ sellerId, from, to });
+
+  return {
+    totalTierSalary,
+    totalCommission,
+    totalRotiQty,
+    totalCommissionQty,
+    daysWorked,
+    totalPenghasilan: totalTierSalary + totalCommission,
+    totalMinusSetoran: shortfallTotal,
+    totalPinjaman: loanTotal,
   };
 }
 

@@ -26,5 +26,12 @@ router.get(
   SellerController.mySalesTrend
 );
 router.get('/api/seller/my-debt', VerifyFirebaseToken, CheckLicense, RequireRole(['seller']), SellerController.myDebt);
+router.get(
+  '/api/seller/my-earnings',
+  VerifyFirebaseToken,
+  CheckLicense,
+  RequireRole(['seller']),
+  SellerController.myEarnings
+);
 
 export default router;

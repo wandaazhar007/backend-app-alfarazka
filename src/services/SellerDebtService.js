@@ -1,16 +1,18 @@
 import pool from '../config/db.js';
 import { extractTotal } from '../utils/pagination.js';
 
-// Nilai penjualan yang SEHARUSNYA disetor penjual hari itu — qty roti terjual (qty_out
-// - qty_returned) x harga jual produk, HANYA produk roti (commission_per_unit kosong/0).
-// Produk ber-komisi (mis. Es Sirsak) sengaja dikecualikan — itu jalur komisi terpisah,
-// bukan bagian dari "setoran" yang dibandingkan ke cash+QRIS di sini.
+// Nilai penjualan yang SEHARUSNYA disetor penjual hari itu — qty terjual (qty_out -
+// qty_returned) x harga jual produk, SEMUA produk (roti maupun produk komisi seperti
+// Es Sirsak). Komisi adalah bonus tambahan yang dibayar lewat payroll, BUKAN pengurang
+// uang penjualan yang harus disetor — uang hasil jual produk komisi tetap harus disetor
+// penuh, sama seperti roti (pola sama seperti "Jumlah uang yang harus disetor" di modal
+// Retur Sore — lihat StockEveningPage.tsx).
 export async function computeExpectedAmount({ sellerId, date }) {
   const { rows } = await pool.query(
     `SELECT COALESCE(SUM((sm.qty_out - sm.qty_returned) * p.unit_price), 0) AS total
      FROM stock_movements sm
      JOIN products p ON p.id = sm.product_id
-     WHERE sm.seller_id = $1 AND sm.movement_date = $2 AND COALESCE(p.commission_per_unit, 0) = 0`,
+     WHERE sm.seller_id = $1 AND sm.movement_date = $2`,
     [sellerId, date]
   );
   return Number(rows[0].total);

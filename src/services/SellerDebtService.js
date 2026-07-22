@@ -90,7 +90,8 @@ export async function listDebts({ branchId, status, sellerId, source, date, pagi
   const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
 
   let query = `SELECT d.id, d.seller_id, u.name AS seller_name, d.source, d.debt_date, d.expected_amount,
-            d.actual_amount, d.total_amount, d.amount_paid, d.status, d.note, d.created_at${
+            d.actual_amount, d.total_amount, d.amount_paid, d.status, d.note, d.created_at,
+            (SELECT MAX(sp.payment_date) FROM seller_debt_payments sp WHERE sp.seller_debt_id = d.id) AS paid_off_date${
               pagination ? ', COUNT(*) OVER() AS full_count' : ''
             }
      FROM seller_debts d
@@ -207,6 +208,9 @@ function mapDebt(row) {
     outstanding: Number(row.total_amount) - Number(row.amount_paid),
     status: row.status,
     note: row.note,
+    // Diisi HANYA lewat query listDebts (subquery MAX(payment_date)) — null di
+    // getDebtWithPayments (belum dibutuhkan di sana, payments-nya sudah lengkap terpisah).
+    paidOffDate: row.paid_off_date ?? null,
     createdAt: row.created_at,
   };
 }

@@ -1,5 +1,10 @@
+import { fileURLToPath } from 'url';
+import path from 'path';
 import PDFDocument from 'pdfkit';
 import ExcelJS from 'exceljs';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const LOGO_PATH = path.join(__dirname, '../assets/logo-alfarazka-bakery.png');
 
 function formatCurrency(n) {
   return `Rp ${Number(n).toLocaleString('id-ID')}`;
@@ -262,4 +267,115 @@ export async function generateExpensesExcelReport(res, { from, to, expenses, tot
 
   await workbook.xlsx.write(res);
   res.end();
+}
+
+// Slip Gaji per penjual/bulan — dipakai halaman Gaji Penjual (tombol Export PDF di
+// sebelah datepicker periode), sumber datanya `computeMonthlyPreview()` (LIVE, sama
+// dengan yang ditampilkan di halaman, terlepas dari status draft/paid closing-nya).
+export function generatePayrollSlipPdf(res, { sellerName, periodMonth, preview }) {
+  const doc = new PDFDocument({ margin: 40 });
+  doc.pipe(res);
+
+  try {
+    doc.image(LOGO_PATH, 40, 40, { width: 60 });
+  } catch {
+    /* Kalau logo gagal dimuat, slip tetap dibuat tanpa logo */
+  }
+
+  // Logo (60x60, center di y=70) disejajarkan vertikal dengan blok judul dua baris
+  // di sebelahnya (title 16pt + subtitle 10pt, center-nya juga ~y=70).
+  doc.fontSize(16).font('Helvetica-Bold').text('Alfarazka Bakery', 110, 55);
+  doc.fontSize(10).font('Helvetica').text('Slip Gaji Penjual Keliling', 110, 74);
+  doc.moveTo(40, 110).lineTo(555, 110).stroke();
+
+  doc.y = 125;
+  doc.fontSize(14).font('Helvetica-Bold').text('SLIP GAJI', 40, doc.y, { width: 515, align: 'center' });
+  doc.moveDown(1.2);
+
+  const [year, month] = periodMonth.split('-').map(Number);
+  const periodLabel = `${MONTH_NAMES_ID[month - 1]} ${year}`;
+
+  doc.fontSize(11).font('Helvetica');
+  const infoY = doc.y;
+  doc.font('Helvetica-Bold').text('Nama Penjual', 40, infoY, { width: 150 });
+  doc.font('Helvetica').text(`: ${sellerName}`, 190, infoY);
+  doc.font('Helvetica-Bold').text('Periode', 40, infoY + 18, { width: 150 });
+  doc.font('Helvetica').text(`: ${periodLabel}`, 190, infoY + 18);
+  doc.font('Helvetica-Bold').text('Tanggal Cetak', 40, infoY + 36, { width: 150 });
+  doc.font('Helvetica').text(`: ${formatTanggalDash(new Date().toISOString().slice(0, 10))}`, 190, infoY + 36);
+  doc.y = infoY + 36 + 24;
+
+  doc.moveTo(40, doc.y).lineTo(555, doc.y).stroke();
+  doc.moveDown(1);
+
+  doc.fontSize(12).font('Helvetica-Bold').text('Ringkasan Kinerja', 40, doc.y, { width: 515, align: 'center' });
+  doc.moveDown(0.5);
+  doc.fontSize(11).font('Helvetica');
+  const rows = [
+    ['Jumlah Hari Bekerja/Jualan', `${preview.daysWorked} hari`],
+    ['Total Produk Terjual (roti)', `${preview.totalRotiQty} pcs`],
+    ['Total Produk Komisi Terjual', `${preview.totalCommissionQty} pcs`],
+  ];
+  rows.forEach(([label, value]) => {
+    const rowY = doc.y;
+    doc.text(label, 40, rowY, { width: 250 });
+    doc.text(value, 300, rowY, { width: 200, align: 'right' });
+    doc.moveDown(0.7);
+  });
+  doc.moveDown(1);
+
+  doc.fontSize(12).font('Helvetica-Bold').text('Rincian Gaji', 40, doc.y, { width: 515, align: 'center' });
+  doc.moveDown(0.5);
+  doc.fontSize(11).font('Helvetica');
+  const payRows = [
+    ['Total Gaji Harian', preview.totalTierSalary],
+    ['Total Komisi', preview.totalCommission],
+  ];
+  payRows.forEach(([label, value]) => {
+    const rowY = doc.y;
+    doc.text(label, 40, rowY, { width: 250 });
+    doc.text(formatCurrency(value), 300, rowY, { width: 200, align: 'right' });
+    doc.moveDown(0.7);
+  });
+
+  const grossPayout = preview.totalTierSalary + preview.totalCommission;
+  const grossY = doc.y;
+  doc.font('Helvetica-Bold');
+  doc.text('Subtotal (Kotor)', 40, grossY, { width: 250 });
+  doc.text(formatCurrency(grossPayout), 300, grossY, { width: 200, align: 'right' });
+  doc.font('Helvetica');
+  doc.moveDown(0.7);
+
+  if (preview.debtDeduction > 0) {
+    const debtY = doc.y;
+    doc.text('Potongan Utang', 40, debtY, { width: 250 });
+    doc.text(`- ${formatCurrency(preview.debtDeduction)}`, 300, debtY, { width: 200, align: 'right' });
+    doc.moveDown(0.7);
+  }
+
+  doc.moveTo(40, doc.y).lineTo(555, doc.y).stroke();
+  doc.moveDown(0.7);
+
+  const netY = doc.y;
+  doc.fontSize(13).font('Helvetica-Bold');
+  doc.text('Total Gaji Diterima (Bersih)', 40, netY, { width: 250 });
+  doc.text(formatCurrency(preview.netPayout), 300, netY, { width: 200, align: 'right' });
+  doc.moveDown(2);
+
+  if (preview.outstandingDebt > preview.debtDeduction) {
+    doc.fontSize(10).font('Helvetica-Oblique').fillColor('#b3242f');
+    doc.text(
+      `Catatan: masih ada sisa utang belum lunas sebesar ${formatCurrency(preview.outstandingDebt - preview.debtDeduction)} yang belum terpotong dari gaji bulan ini.`,
+      40,
+      doc.y,
+      { width: 515 }
+    );
+    doc.fillColor('black');
+    doc.moveDown(1.5);
+  }
+
+  doc.fontSize(9).font('Helvetica').fillColor('#6b7280');
+  doc.text('Slip gaji ini digenerate otomatis oleh sistem Alfarazka Bakery.', 40, doc.y, { width: 515, align: 'center' });
+
+  doc.end();
 }

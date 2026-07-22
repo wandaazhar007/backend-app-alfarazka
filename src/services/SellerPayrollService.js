@@ -29,6 +29,7 @@ export async function computeMonthlyPreview({ sellerId, branchId, periodMonth })
   const { rows: dailyRows } = await pool.query(
     `SELECT sm.movement_date AS date,
             SUM(CASE WHEN COALESCE(p.commission_per_unit, 0) = 0 THEN sm.qty_out - sm.qty_returned ELSE 0 END) AS roti_qty,
+            SUM(CASE WHEN COALESCE(p.commission_per_unit, 0) > 0 THEN sm.qty_out - sm.qty_returned ELSE 0 END) AS commission_qty,
             SUM(CASE WHEN COALESCE(p.commission_per_unit, 0) > 0 THEN (sm.qty_out - sm.qty_returned) * p.commission_per_unit ELSE 0 END) AS commission_amount
      FROM stock_movements sm
      JOIN products p ON p.id = sm.product_id
@@ -44,12 +45,16 @@ export async function computeMonthlyPreview({ sellerId, branchId, periodMonth })
       date: row.date,
       rotiQty,
       tierSalary: computeTierSalary(rotiQty),
+      commissionQty: Number(row.commission_qty),
       commissionAmount: Number(row.commission_amount),
     };
   });
 
   const totalTierSalary = dailyBreakdown.reduce((sum, d) => sum + d.tierSalary, 0);
   const totalCommission = dailyBreakdown.reduce((sum, d) => sum + d.commissionAmount, 0);
+  const totalRotiQty = dailyBreakdown.reduce((sum, d) => sum + d.rotiQty, 0);
+  const totalCommissionQty = dailyBreakdown.reduce((sum, d) => sum + d.commissionQty, 0);
+  const daysWorked = dailyBreakdown.length;
   const outstandingDebt = await SellerDebtService.getMyOutstandingTotal({ sellerId });
   const grossPayout = totalTierSalary + totalCommission;
   // Tidak pernah memotong lebih dari payout kotornya sendiri (tidak sampai minus).
@@ -58,7 +63,18 @@ export async function computeMonthlyPreview({ sellerId, branchId, periodMonth })
 
   const unsettledDate = await findFirstUnsettledDate({ sellerId, monthStart, monthEnd });
 
-  return { totalTierSalary, totalCommission, outstandingDebt, debtDeduction, netPayout, dailyBreakdown, unsettledDate };
+  return {
+    totalTierSalary,
+    totalCommission,
+    totalRotiQty,
+    totalCommissionQty,
+    daysWorked,
+    outstandingDebt,
+    debtDeduction,
+    netPayout,
+    dailyBreakdown,
+    unsettledDate,
+  };
 }
 
 // Tanggal pertama (paling awal) dalam periode dimana penjual sudah bawa stok

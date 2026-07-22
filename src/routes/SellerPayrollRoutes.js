@@ -20,6 +20,13 @@ router.get(
   RequireRole(['admin', 'owner']),
   SellerPayrollController.preview
 );
+router.get(
+  '/api/seller-payroll/slip',
+  VerifyFirebaseToken,
+  CheckLicense,
+  RequireRole(['admin', 'owner']),
+  SellerPayrollController.exportSlip
+);
 router.post(
   '/api/seller-payroll/generate',
   VerifyFirebaseToken,

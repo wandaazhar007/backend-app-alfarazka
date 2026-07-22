@@ -6,7 +6,7 @@ import * as ReportExportService from '../services/ReportExportService.js';
 const MEAL_ALLOWANCE_CATEGORY = 'Uang Makan Penjual';
 
 export const list = async (req, res) => {
-  const { date, from, to, category_id: categoryId } = req.query;
+  const { date, from, to, category_id: categoryId, seller_id: sellerId } = req.query;
   const pagination = getPagination(req);
 
   const params = [];
@@ -28,11 +28,15 @@ export const list = async (req, res) => {
     params.push(categoryId);
     conditions.push(`e.category_id = $${params.length}`);
   }
+  if (sellerId) {
+    params.push(sellerId);
+    conditions.push(`e.seller_id = $${params.length}`);
+  }
 
   const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
 
   let query = `SELECT e.id, e.branch_id, e.category_id, ec.name AS category_name, e.amount, e.description,
-            e.expense_date, e.created_by, e.created_at${
+            e.seller_id, e.expense_date, e.created_by, e.created_at${
               pagination
                 ? `, COUNT(*) OVER() AS full_count,
                    SUM(e.amount) OVER() AS total_amount_all,
@@ -113,7 +117,7 @@ export const exportExpenses = async (req, res) => {
 };
 
 export const create = async (req, res) => {
-  const { categoryId, amount, description, expenseDate } = req.body;
+  const { categoryId, amount, description, expenseDate, sellerId } = req.body;
 
   if (!categoryId || typeof amount !== 'number' || amount < 0 || !expenseDate) {
     return res.status(400).json({
@@ -122,12 +126,25 @@ export const create = async (req, res) => {
     });
   }
 
-  const { rows } = await pool.query(
-    `INSERT INTO expenses (branch_id, category_id, amount, description, expense_date, created_by)
-     VALUES ($1, $2, $3, $4, $5, $6)
-     RETURNING id, branch_id, category_id, amount, description, expense_date, created_by, created_at`,
-    [req.user.branchId, categoryId, amount, description ?? null, expenseDate, req.user.id]
-  );
+  let rows;
+  try {
+    ({ rows } = await pool.query(
+      `INSERT INTO expenses (branch_id, category_id, amount, description, expense_date, seller_id, created_by)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
+       RETURNING id, branch_id, category_id, amount, description, seller_id, expense_date, created_by, created_at`,
+      [req.user.branchId, categoryId, amount, description ?? null, expenseDate, sellerId ?? null, req.user.id]
+    ));
+  } catch (err) {
+    // unique_violation (expenses_seller_meal_unique) — penjual ini sudah pernah
+    // diinput uang makan di tanggal yang sama.
+    if (err.code === '23505') {
+      return res.status(409).json({
+        error: 'MEAL_ALLOWANCE_ALREADY_GIVEN',
+        message: 'Penjual ini sudah mendapatkan uang makan pada tanggal ini.',
+      });
+    }
+    throw err;
+  }
 
   const expense = rows[0];
 
@@ -136,12 +153,12 @@ export const create = async (req, res) => {
     action: 'create',
     entity: 'expenses',
     entityId: expense.id,
-    details: { categoryId, amount, expenseDate },
+    details: { categoryId, amount, expenseDate, sellerId },
   });
 
   const { rows: withCategory } = await pool.query(
     `SELECT e.id, e.branch_id, e.category_id, ec.name AS category_name, e.amount, e.description,
-            e.expense_date, e.created_by, e.created_at
+            e.seller_id, e.expense_date, e.created_by, e.created_at
      FROM expenses e JOIN expense_categories ec ON ec.id = e.category_id WHERE e.id = $1`,
     [expense.id]
   );
@@ -229,6 +246,7 @@ function mapExpense(row) {
     categoryName: row.category_name,
     amount: Number(row.amount),
     description: row.description,
+    sellerId: row.seller_id ?? null,
     expenseDate: row.expense_date,
     createdBy: row.created_by,
     createdAt: row.created_at,

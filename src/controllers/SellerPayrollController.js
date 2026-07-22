@@ -1,4 +1,6 @@
+import pool from '../config/db.js';
 import * as SellerPayrollService from '../services/SellerPayrollService.js';
+import * as ReportExportService from '../services/ReportExportService.js';
 import { getPagination } from '../utils/pagination.js';
 
 function normalizePeriodMonth(value) {
@@ -7,6 +9,17 @@ function normalizePeriodMonth(value) {
   const [year, month] = value.split('-');
   if (!year || !month) return null;
   return `${year}-${month.padStart(2, '0')}-01`;
+}
+
+const MONTH_NAMES_ID = [
+  'januari', 'februari', 'maret', 'april', 'mei', 'juni',
+  'juli', 'agustus', 'september', 'oktober', 'november', 'desember',
+];
+
+// "2026-07-01" -> "juli-2026" — nama bulan, bukan angka, buat nama file yang diunduh.
+function formatPeriodMonthForFilename(normalizedPeriodMonth) {
+  const [year, month] = normalizedPeriodMonth.split('-').map(Number);
+  return `${MONTH_NAMES_ID[month - 1]}-${year}`;
 }
 
 export const preview = async (req, res) => {
@@ -24,6 +37,38 @@ export const preview = async (req, res) => {
   });
 
   res.json(result);
+};
+
+export const exportSlip = async (req, res) => {
+  const { sellerId, periodMonth } = req.query;
+  const normalized = normalizePeriodMonth(periodMonth);
+
+  if (!sellerId || !normalized) {
+    return res.status(400).json({ error: 'VALIDATION_ERROR', message: 'sellerId dan periodMonth (YYYY-MM) wajib diisi' });
+  }
+
+  const { rows } = await pool.query(
+    `SELECT u.name FROM sellers se JOIN users u ON u.id = se.user_id WHERE se.id = $1`,
+    [sellerId]
+  );
+  if (rows.length === 0) {
+    return res.status(404).json({ error: 'NOT_FOUND', message: 'Penjual tidak ditemukan' });
+  }
+  const sellerName = rows[0].name;
+
+  const preview = await SellerPayrollService.computeMonthlyPreview({
+    sellerId,
+    branchId: req.user.branchId,
+    periodMonth: normalized,
+  });
+
+  const safeSellerName = sellerName.replace(/[^a-zA-Z0-9]+/g, '-');
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader(
+    'Content-Disposition',
+    `attachment; filename="slip-gaji-${safeSellerName}-${formatPeriodMonthForFilename(normalized)}.pdf"`
+  );
+  ReportExportService.generatePayrollSlipPdf(res, { sellerName, periodMonth: normalized, preview });
 };
 
 export const generate = async (req, res) => {

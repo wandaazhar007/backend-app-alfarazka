@@ -183,11 +183,16 @@ export async function getKelilingBreakdown({ branchId, date, from, to }) {
        GROUP BY s.seller_id
      ),
      stock_agg AS (
-       SELECT sm.seller_id, SUM(sm.qty_out) AS qty_out_total, SUM(sm.qty_returned) AS qty_returned_total,
+       SELECT sm.seller_id,
+              SUM(CASE WHEN COALESCE(p.commission_per_unit, 0) = 0 THEN sm.qty_out ELSE 0 END) AS roti_qty_out_total,
+              SUM(CASE WHEN COALESCE(p.commission_per_unit, 0) = 0 THEN sm.qty_returned ELSE 0 END) AS roti_qty_returned_total,
+              SUM(CASE WHEN COALESCE(p.commission_per_unit, 0) > 0 THEN sm.qty_out ELSE 0 END) AS komisi_qty_out_total,
+              SUM(CASE WHEN COALESCE(p.commission_per_unit, 0) > 0 THEN sm.qty_returned ELSE 0 END) AS komisi_qty_returned_total,
               bool_and(sm.returned_at IS NOT NULL) AS is_fully_returned,
               bool_or(sm.needs_resettlement) AS needs_resettlement,
               MIN(sm.created_at) AS first_created_at
        FROM stock_movements sm
+       JOIN products p ON p.id = sm.product_id
        WHERE ${dateOp('sm.movement_date')} ${branchFilterStock}
        GROUP BY sm.seller_id
      ),
@@ -196,12 +201,28 @@ export async function getKelilingBreakdown({ branchId, date, from, to }) {
        FROM qris_settlements qs
        WHERE ${dateOp('qs.settlement_date')}
        GROUP BY qs.seller_id
+     ),
+     debt_agg AS (
+       SELECT seller_id, SUM(total_amount) AS minus_total
+       FROM seller_debts
+       WHERE source = 'kekurangan_setoran' AND ${dateOp('debt_date')}
+       GROUP BY seller_id
+     ),
+     pinjaman_agg AS (
+       SELECT seller_id, SUM(total_amount) AS pinjaman_total
+       FROM seller_debts
+       WHERE source = 'pinjaman' AND ${dateOp('debt_date')}
+       GROUP BY seller_id
      )
      SELECT se.id AS seller_id, u.name AS seller_name,
             COALESCE(cash_agg.cash_total, 0) AS cash,
             COALESCE(qris_agg.qris_total, 0) AS qris,
-            COALESCE(stock_agg.qty_out_total, 0) AS qty_out,
-            COALESCE(stock_agg.qty_returned_total, 0) AS qty_returned,
+            COALESCE(debt_agg.minus_total, 0) AS minus,
+            COALESCE(pinjaman_agg.pinjaman_total, 0) AS pinjaman,
+            COALESCE(stock_agg.roti_qty_out_total, 0) AS qty_out,
+            COALESCE(stock_agg.roti_qty_returned_total, 0) AS qty_returned,
+            COALESCE(stock_agg.komisi_qty_out_total, 0) AS komisi_qty_out,
+            COALESCE(stock_agg.komisi_qty_returned_total, 0) AS komisi_qty_returned,
             COALESCE(stock_agg.is_fully_returned, false) AS is_fully_returned,
             COALESCE(stock_agg.needs_resettlement, false) AS needs_resettlement,
             (cash_agg.seller_id IS NOT NULL) AS has_cash_record,
@@ -211,38 +232,20 @@ export async function getKelilingBreakdown({ branchId, date, from, to }) {
      LEFT JOIN cash_agg ON cash_agg.seller_id = se.id
      LEFT JOIN qris_agg ON qris_agg.seller_id = se.id
      LEFT JOIN stock_agg ON stock_agg.seller_id = se.id
+     LEFT JOIN debt_agg ON debt_agg.seller_id = se.id
+     LEFT JOIN pinjaman_agg ON pinjaman_agg.seller_id = se.id
      WHERE se.is_active = true ${branchFilterSellers}
      ORDER BY stock_agg.first_created_at DESC NULLS LAST, u.name ASC`,
     params
   );
-
-  // Produk komisi (Es Sirsak dkk, commission_per_unit > 0) dihitung terpisah dari
-  // qty_out/qty_returned di atas (yang mencampur semua produk) — dipakai HANYA
-  // utk card "Produk Komisi Terjual" di halaman Laporan, tidak masuk totalQtySold.
-  // Sama seperti qtySold roti: penjual yang belum retur sore (returned_at masih null)
-  // dikecualikan seluruhnya sampai dia retur, supaya tidak kelebihan hitung.
-  const { rows: commissionRows } = await pool.query(
-    `WITH fully_returned_sellers AS (
-       SELECT sm.seller_id
-       FROM stock_movements sm
-       WHERE ${dateOp('sm.movement_date')} ${branchFilterStock}
-       GROUP BY sm.seller_id
-       HAVING bool_and(sm.returned_at IS NOT NULL)
-     )
-     SELECT COALESCE(SUM(sm.qty_out - sm.qty_returned), 0) AS total
-     FROM stock_movements sm
-     JOIN products p ON p.id = sm.product_id
-     WHERE ${dateOp('sm.movement_date')} AND COALESCE(p.commission_per_unit, 0) > 0 ${branchFilterStock}
-       AND sm.seller_id IN (SELECT seller_id FROM fully_returned_sellers)`,
-    params
-  );
-  const totalKomisiQtySold = Number(commissionRows[0].total);
 
   const sellers = rows.map((row) => {
     const cash = Number(row.cash);
     const qris = Number(row.qris);
     const qtyOut = Number(row.qty_out);
     const qtyReturned = Number(row.qty_returned);
+    const commissionQtyOut = Number(row.komisi_qty_out);
+    const commissionQtyReturned = Number(row.komisi_qty_returned);
     const isFullyReturned = row.is_fully_returned === true;
 
     return {
@@ -250,6 +253,8 @@ export async function getKelilingBreakdown({ branchId, date, from, to }) {
       sellerName: row.seller_name,
       cash,
       qris,
+      minus: Number(row.minus),
+      pinjaman: Number(row.pinjaman),
       totalPenjualan: cash + qris,
       qtyOut,
       qtyReturned,
@@ -257,6 +262,8 @@ export async function getKelilingBreakdown({ branchId, date, from, to }) {
       // dihitung sebagai "terjual" sampai penjual ini benar-benar retur (dikonfirmasi
       // user), supaya card Roti/Komisi Terjual di Laporan tidak kelebihan hitung.
       qtySold: isFullyReturned ? qtyOut - qtyReturned : 0,
+      commissionQtyReturned: isFullyReturned ? commissionQtyReturned : 0,
+      commissionQtySold: isFullyReturned ? commissionQtyOut - commissionQtyReturned : 0,
       isFullyReturned,
       isSettled: row.has_cash_record === true && row.has_qris_record === true,
       needsResettlement: row.needs_resettlement === true,
@@ -267,15 +274,30 @@ export async function getKelilingBreakdown({ branchId, date, from, to }) {
     (acc, s) => ({
       totalCash: acc.totalCash + s.cash,
       totalQris: acc.totalQris + s.qris,
+      totalMinus: acc.totalMinus + s.minus,
+      totalPinjaman: acc.totalPinjaman + s.pinjaman,
       totalPenjualan: acc.totalPenjualan + s.totalPenjualan,
       totalQtyOut: acc.totalQtyOut + s.qtyOut,
       totalQtyReturned: acc.totalQtyReturned + s.qtyReturned,
       totalQtySold: acc.totalQtySold + s.qtySold,
+      totalKomisiQtySold: acc.totalKomisiQtySold + s.commissionQtySold,
+      totalKomisiQtyReturned: acc.totalKomisiQtyReturned + s.commissionQtyReturned,
     }),
-    { totalCash: 0, totalQris: 0, totalPenjualan: 0, totalQtyOut: 0, totalQtyReturned: 0, totalQtySold: 0 }
+    {
+      totalCash: 0,
+      totalQris: 0,
+      totalMinus: 0,
+      totalPinjaman: 0,
+      totalPenjualan: 0,
+      totalQtyOut: 0,
+      totalQtyReturned: 0,
+      totalQtySold: 0,
+      totalKomisiQtySold: 0,
+      totalKomisiQtyReturned: 0,
+    }
   );
 
-  return { sellers, summary: { ...summary, totalKomisiQtySold } };
+  return { sellers, summary };
 }
 
 // Store sales: mini POS, always paid in full at the time of purchase

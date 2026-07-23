@@ -30,6 +30,12 @@ export async function insertPings({ sellerId, branchId, pings }) {
 }
 
 // Posisi TERAKHIR per penjual (bukan semua baris) — dipakai peta/list Owner.
+//
+// `recorded_at` adalah TIMESTAMPTZ (instant presisi, beda dari kolom *_date lain
+// di app ini yang DATE polos) — server Postgres jalan di UTC, jadi `::date` polos
+// tanpa AT TIME ZONE akan salah setiap kali jam WIB (UTC+7) sudah masuk hari
+// berikutnya padahal UTC masih hari sebelumnya (mis. jam 03:00 WIB = 20:00 UTC hari
+// sebelumnya) — ping yang sebenarnya "hari ini" di WIB jadi tidak ketemu sama sekali.
 export async function getLatestPositions({ branchId, date }) {
   const params = [date];
   let branchFilter = '';
@@ -45,7 +51,7 @@ export async function getLatestPositions({ branchId, date }) {
      FROM seller_locations sl
      JOIN sellers se ON se.id = sl.seller_id
      JOIN users u ON u.id = se.user_id
-     WHERE sl.recorded_at::date = $1 ${branchFilter}
+     WHERE (sl.recorded_at AT TIME ZONE 'Asia/Jakarta')::date = $1 ${branchFilter}
      ORDER BY sl.seller_id, sl.recorded_at DESC`,
     params
   );
@@ -59,7 +65,7 @@ export async function getTrail({ sellerId, date }) {
   const { rows } = await pool.query(
     `SELECT seller_id, latitude, longitude, accuracy, speed, heading, battery_level, recorded_at
      FROM seller_locations
-     WHERE seller_id = $1 AND recorded_at::date = $2
+     WHERE seller_id = $1 AND (recorded_at AT TIME ZONE 'Asia/Jakarta')::date = $2
      ORDER BY recorded_at ASC
      LIMIT 2000`,
     [sellerId, date]

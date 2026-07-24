@@ -22,6 +22,7 @@ import licenseRoutes from './routes/LicenseRoutes.js';
 import sellerDebtRoutes from './routes/SellerDebtRoutes.js';
 import sellerPayrollRoutes from './routes/SellerPayrollRoutes.js';
 import sellerLocationRoutes from './routes/SellerLocationRoutes.js';
+import pushTokenRoutes from './routes/PushTokenRoutes.js';
 import { startLicenseCron } from './services/LicenseCron.js';
 import { startDailyClosingCron } from './services/DailyClosingCron.js';
 
@@ -51,6 +52,7 @@ app.use(licenseRoutes);
 app.use(sellerDebtRoutes);
 app.use(sellerPayrollRoutes);
 app.use(sellerLocationRoutes);
+app.use(pushTokenRoutes);
 
 startLicenseCron();
 startDailyClosingCron();

@@ -1,5 +1,6 @@
 import pool from '../config/db.js';
 import * as StockMovementService from '../services/StockMovementService.js';
+import * as PushNotificationService from '../services/PushNotificationService.js';
 import todayJakarta from '../utils/todayJakarta.js';
 import { logAudit } from '../middlewares/AuditLogger.js';
 
@@ -27,7 +28,27 @@ export const create = async (req, res) => {
   });
 
   res.status(201).json(movements);
+
+  notifyOwnerOfMorningStock(req.user.branchId, items).catch(() => {});
 };
+
+// Fire-and-forget, dipanggil SETELAH response dikirim — Owner tidak perlu nunggu
+// push notification selesai terkirim, dan kegagalannya tidak boleh mempengaruhi
+// hasil input stok pagi yang sudah berhasil disimpan.
+async function notifyOwnerOfMorningStock(branchId, items) {
+  const sellerIds = [...new Set(items.map((item) => item.sellerId))];
+  const { rows } = await pool.query(
+    `SELECT u.name FROM sellers se JOIN users u ON u.id = se.user_id WHERE se.id = ANY($1)`,
+    [sellerIds]
+  );
+  const sellerNames = rows.map((r) => r.name).join(', ');
+
+  await PushNotificationService.notifyRole('owner', branchId, {
+    title: 'Stok Pagi Masuk',
+    body: `Stok pagi sudah dicatat untuk: ${sellerNames}`,
+    data: { type: 'morning-stock' },
+  });
+}
 
 export const setReturn = async (req, res) => {
   const { id } = req.params;

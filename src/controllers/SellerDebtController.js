@@ -1,4 +1,6 @@
+import pool from '../config/db.js';
 import * as SellerDebtService from '../services/SellerDebtService.js';
+import * as PushNotificationService from '../services/PushNotificationService.js';
 import { getPagination } from '../utils/pagination.js';
 
 export const settle = async (req, res) => {
@@ -55,7 +57,26 @@ export const createLoan = async (req, res) => {
   });
 
   res.status(201).json(debt);
+
+  notifyOwnerOfLoan(req.user.branchId, sellerId, amount).catch(() => {});
 };
+
+// Fire-and-forget, sama seperti notifikasi lain (StockMovement/Sales/DailyClosing) —
+// kegagalan kirim push tidak boleh mempengaruhi pinjaman yang sudah berhasil disimpan.
+async function notifyOwnerOfLoan(branchId, sellerId, amount) {
+  const { rows } = await pool.query(
+    `SELECT u.name FROM sellers se JOIN users u ON u.id = se.user_id WHERE se.id = $1`,
+    [sellerId]
+  );
+  const sellerName = rows[0]?.name ?? 'Penjual';
+  const formattedAmount = new Intl.NumberFormat('id-ID').format(amount);
+
+  await PushNotificationService.notifyRole('owner', branchId, {
+    title: 'Pinjaman Penjual Baru',
+    body: `${sellerName} mendapat pinjaman Rp${formattedAmount}`,
+    data: { type: 'seller-loan' },
+  });
+}
 
 export const list = async (req, res) => {
   const { status, seller_id: sellerId, source, date } = req.query;

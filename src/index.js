@@ -25,6 +25,7 @@ import sellerLocationRoutes from './routes/SellerLocationRoutes.js';
 import pushTokenRoutes from './routes/PushTokenRoutes.js';
 import { startLicenseCron } from './services/LicenseCron.js';
 import { startDailyClosingCron } from './services/DailyClosingCron.js';
+import { startSetoranReminderCron } from './services/SetoranReminderCron.js';
 
 const app = express();
 
@@ -56,6 +57,7 @@ app.use(pushTokenRoutes);
 
 startLicenseCron();
 startDailyClosingCron();
+startSetoranReminderCron();
 
 app.use((err, req, res, next) => {
   if (res.headersSent) {

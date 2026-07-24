@@ -1,4 +1,5 @@
 import * as DailyClosingService from '../services/DailyClosingService.js';
+import * as PushNotificationService from '../services/PushNotificationService.js';
 import todayJakarta from '../utils/todayJakarta.js';
 
 export const generate = async (req, res) => {
@@ -11,7 +12,20 @@ export const generate = async (req, res) => {
   });
 
   res.status(201).json(closing);
+
+  notifyOwnerOfClosing(req.user.branchId, closing).catch(() => {});
 };
+
+// Fire-and-forget, sama seperti notifikasi lain di StockMovementController/SalesController.
+async function notifyOwnerOfClosing(branchId, closing) {
+  const formattedProfit = new Intl.NumberFormat('id-ID').format(closing.netProfit);
+
+  await PushNotificationService.notifyRole('owner', branchId, {
+    title: 'Tutup Buku Selesai',
+    body: `Tutup buku ${closing.closingDate} selesai — Laba bersih: Rp${formattedProfit}`,
+    data: { type: 'daily-closing' },
+  });
+}
 
 export const list = async (req, res) => {
   const { from, to } = req.query;

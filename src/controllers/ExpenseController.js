@@ -2,8 +2,13 @@ import pool from '../config/db.js';
 import { logAudit } from '../middlewares/AuditLogger.js';
 import { getPagination, extractTotal } from '../utils/pagination.js';
 import * as ReportExportService from '../services/ReportExportService.js';
+import * as PushNotificationService from '../services/PushNotificationService.js';
 
 const MEAL_ALLOWANCE_CATEGORY = 'Uang Makan Penjual';
+// Owner cuma perlu diberitahu pengeluaran BESAR (mis. sewa, servis gerobak) — uang
+// makan penjual harian & pengeluaran kecil rutin lain akan spam notifikasi kalau
+// tidak disaring dulu.
+const LARGE_EXPENSE_NOTIFICATION_THRESHOLD = 500000;
 
 export const list = async (req, res) => {
   const { date, from, to, category_id: categoryId, seller_id: sellerId } = req.query;
@@ -163,8 +168,25 @@ export const create = async (req, res) => {
     [expense.id]
   );
 
-  res.status(201).json(mapExpense(withCategory[0]));
+  const mappedExpense = mapExpense(withCategory[0]);
+  res.status(201).json(mappedExpense);
+
+  if (mappedExpense.amount >= LARGE_EXPENSE_NOTIFICATION_THRESHOLD) {
+    notifyOwnerOfLargeExpense(req.user.branchId, mappedExpense).catch(() => {});
+  }
 };
+
+// Fire-and-forget, sama seperti notifikasi lain — kegagalan kirim push tidak boleh
+// mempengaruhi pengeluaran yang sudah berhasil disimpan.
+async function notifyOwnerOfLargeExpense(branchId, expense) {
+  const formattedAmount = new Intl.NumberFormat('id-ID').format(expense.amount);
+
+  await PushNotificationService.notifyRole('owner', branchId, {
+    title: 'Pengeluaran Besar Dicatat',
+    body: `${expense.categoryName}: Rp${formattedAmount}${expense.description ? ` — ${expense.description}` : ''}`,
+    data: { type: 'large-expense' },
+  });
+}
 
 export const update = async (req, res) => {
   const { id } = req.params;

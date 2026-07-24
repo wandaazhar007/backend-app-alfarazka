@@ -1,4 +1,6 @@
+import pool from '../config/db.js';
 import * as SalesService from '../services/SalesService.js';
+import * as PushNotificationService from '../services/PushNotificationService.js';
 
 export const create = async (req, res) => {
   const { saleType } = req.body;
@@ -43,6 +45,25 @@ async function createKeliling(req, res) {
   });
 
   res.status(201).json(sale);
+
+  notifyOwnerOfSetoran(req.user.branchId, sellerId, sale.totalAmount).catch(() => {});
+}
+
+// Fire-and-forget, sama seperti notifyOwnerOfMorningStock di StockMovementController —
+// kegagalan kirim push tidak boleh mempengaruhi setoran yang sudah berhasil disimpan.
+async function notifyOwnerOfSetoran(branchId, sellerId, totalAmount) {
+  const { rows } = await pool.query(
+    `SELECT u.name FROM sellers se JOIN users u ON u.id = se.user_id WHERE se.id = $1`,
+    [sellerId]
+  );
+  const sellerName = rows[0]?.name ?? 'Penjual';
+  const formattedAmount = new Intl.NumberFormat('id-ID').format(totalAmount);
+
+  await PushNotificationService.notifyRole('owner', branchId, {
+    title: 'Setoran Masuk',
+    body: `${sellerName} sudah setor Rp${formattedAmount}`,
+    data: { type: 'setoran' },
+  });
 }
 
 async function createToko(req, res) {

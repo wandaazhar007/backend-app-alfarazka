@@ -23,6 +23,7 @@ import sellerDebtRoutes from './routes/SellerDebtRoutes.js';
 import sellerPayrollRoutes from './routes/SellerPayrollRoutes.js';
 import sellerLocationRoutes from './routes/SellerLocationRoutes.js';
 import pushTokenRoutes from './routes/PushTokenRoutes.js';
+import notificationRoutes from './routes/NotificationRoutes.js';
 import { startLicenseCron } from './services/LicenseCron.js';
 import { startDailyClosingCron } from './services/DailyClosingCron.js';
 import { startSetoranReminderCron } from './services/SetoranReminderCron.js';
@@ -55,6 +56,7 @@ app.use(sellerDebtRoutes);
 app.use(sellerPayrollRoutes);
 app.use(sellerLocationRoutes);
 app.use(pushTokenRoutes);
+app.use(notificationRoutes);
 
 startLicenseCron();
 startDailyClosingCron();

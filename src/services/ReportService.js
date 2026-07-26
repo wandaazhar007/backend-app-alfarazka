@@ -262,6 +262,13 @@ export async function getKelilingBreakdown({ branchId, date, from, to }) {
       // dihitung sebagai "terjual" sampai penjual ini benar-benar retur (dikonfirmasi
       // user), supaya card Roti/Komisi Terjual di Laporan tidak kelebihan hitung.
       qtySold: isFullyReturned ? qtyOut - qtyReturned : 0,
+      // TIDAK digating isFullyReturned seperti commissionQtySold — dipakai
+      // DailySettlementPage buat deteksi "penjual ini punya stok produk komisi hari
+      // ini" walau belum retur sore, supaya penjual yang HANYA bawa produk komisi
+      // (tanpa roti sama sekali) tetap muncul di Setoran & QRIS. Komisi tetap wajib
+      // disetor cash/QRIS-nya (lihat 00_PROJECT_BRIEF.md — komisi cuma bonus tambahan,
+      // bukan pengurang uang yang harus disetor).
+      commissionQtyOut,
       commissionQtyReturned: isFullyReturned ? commissionQtyReturned : 0,
       commissionQtySold: isFullyReturned ? commissionQtyOut - commissionQtyReturned : 0,
       isFullyReturned,

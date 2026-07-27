@@ -166,26 +166,33 @@ export async function generateClosing({ branchId, closingDate, createdBy }) {
 // generateClosing()/Tutup Buku (yang tetap per-hari, tidak diubah). Dihitung LIVE
 // dari tabel sumber (bukan dari SUM(daily_closings)) supaya tetap akurat walau ada
 // hari dalam rentang yang belum di-"Tutup Buku" (belum punya baris daily_closings).
+// branchId opsional (Owner = semua cabang, tidak difilter) — BEDA dari computeTotals()
+// di atas yang selalu dipanggil dengan branchId nyata (admin-only action/cron). Tanpa
+// guard ini, `branch_id = $1` dengan $1 = undefined (jadi NULL di Postgres) membuat
+// SETIAP baris ter-exclude (NULL comparison selalu false), jadi Owner selalu lihat
+// HPP/Laba Kotor/Pengeluaran/Laba Bersih Rp 0 walau datanya ada — persis bug yang
+// ditemukan lewat QA end-to-end (lihat percakapan terkait perbaikan ini).
 export async function computeRangeTotals({ branchId, from, to }) {
   const { rows: cashRows } = await pool.query(
     `SELECT COALESCE(SUM(p.amount), 0) AS total
      FROM sales s
      JOIN payments p ON p.sale_id = s.id AND p.method = 'cash'
-     WHERE s.branch_id = $1 AND s.sale_date BETWEEN $2 AND $3`,
-    [branchId, from, to]
+     WHERE s.sale_date BETWEEN $1 AND $2 ${branchId ? 'AND s.branch_id = $3' : ''}`,
+    branchId ? [from, to, branchId] : [from, to]
   );
   const totalSalesCash = Number(cashRows[0].total);
 
   const { rows: qrisSettlementRows } = await pool.query(
-    `SELECT COALESCE(SUM(amount), 0) AS total FROM qris_settlements WHERE branch_id = $1 AND settlement_date BETWEEN $2 AND $3`,
-    [branchId, from, to]
+    `SELECT COALESCE(SUM(amount), 0) AS total FROM qris_settlements
+     WHERE settlement_date BETWEEN $1 AND $2 ${branchId ? 'AND branch_id = $3' : ''}`,
+    branchId ? [from, to, branchId] : [from, to]
   );
   const { rows: qrisPaymentRows } = await pool.query(
     `SELECT COALESCE(SUM(p.amount), 0) AS total
      FROM sales s
      JOIN payments p ON p.sale_id = s.id AND p.method = 'qris'
-     WHERE s.branch_id = $1 AND s.sale_date BETWEEN $2 AND $3`,
-    [branchId, from, to]
+     WHERE s.sale_date BETWEEN $1 AND $2 ${branchId ? 'AND s.branch_id = $3' : ''}`,
+    branchId ? [from, to, branchId] : [from, to]
   );
   const totalSalesQris = Number(qrisSettlementRows[0].total) + Number(qrisPaymentRows[0].total);
 
@@ -193,16 +200,16 @@ export async function computeRangeTotals({ branchId, from, to }) {
     `SELECT COALESCE(SUM((sm.qty_out - sm.qty_returned) * p.cost_price), 0) AS total
      FROM stock_movements sm
      JOIN products p ON p.id = sm.product_id
-     WHERE sm.branch_id = $1 AND sm.movement_date BETWEEN $2 AND $3`,
-    [branchId, from, to]
+     WHERE sm.movement_date BETWEEN $1 AND $2 ${branchId ? 'AND sm.branch_id = $3' : ''}`,
+    branchId ? [from, to, branchId] : [from, to]
   );
   const { rows: itemCogsRows } = await pool.query(
     `SELECT COALESCE(SUM(si.qty * p.cost_price), 0) AS total
      FROM sale_items si
      JOIN sales s ON s.id = si.sale_id
      JOIN products p ON p.id = si.product_id
-     WHERE s.branch_id = $1 AND s.sale_date BETWEEN $2 AND $3`,
-    [branchId, from, to]
+     WHERE s.sale_date BETWEEN $1 AND $2 ${branchId ? 'AND s.branch_id = $3' : ''}`,
+    branchId ? [from, to, branchId] : [from, to]
   );
   const totalCogs = Number(mobileCogsRows[0].total) + Number(itemCogsRows[0].total);
 
@@ -210,15 +217,15 @@ export async function computeRangeTotals({ branchId, from, to }) {
     `SELECT COALESCE(SUM(e.amount), 0) AS total
      FROM expenses e
      JOIN expense_categories ec ON ec.id = e.category_id
-     WHERE e.branch_id = $1 AND e.expense_date BETWEEN $2 AND $3 AND ec.name != $4`,
-    [branchId, from, to, COGS_EXPENSE_CATEGORY]
+     WHERE e.expense_date BETWEEN $1 AND $2 AND ec.name != $3 ${branchId ? 'AND e.branch_id = $4' : ''}`,
+    branchId ? [from, to, COGS_EXPENSE_CATEGORY, branchId] : [from, to, COGS_EXPENSE_CATEGORY]
   );
   const totalExpenses = Number(expenseRows[0].total);
 
   const { rows: stockRows } = await pool.query(
     `SELECT COALESCE(SUM(qty_out - qty_returned), 0) AS sold, COALESCE(SUM(qty_returned), 0) AS returned
-     FROM stock_movements WHERE branch_id = $1 AND movement_date BETWEEN $2 AND $3`,
-    [branchId, from, to]
+     FROM stock_movements WHERE movement_date BETWEEN $1 AND $2 ${branchId ? 'AND branch_id = $3' : ''}`,
+    branchId ? [from, to, branchId] : [from, to]
   );
   const totalBreadSold = Number(stockRows[0].sold);
   const totalBreadReturned = Number(stockRows[0].returned);
